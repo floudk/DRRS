@@ -1,4 +1,4 @@
-# DRRS: Fine-Grained Dynamic Scaling for Stateful Stream Processing
+# Fine-Grained Dynamic Scaling for Stateful Stream Processing Systems
 
 ⚠️ **Note: This repository contains the research prototype of DRRS. The complete implementation and documentation will be made available upon paper publication.**
 
