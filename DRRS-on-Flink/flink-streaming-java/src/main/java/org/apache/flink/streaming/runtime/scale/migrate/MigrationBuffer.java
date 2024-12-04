@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.Map;
 
+import static org.apache.flink.util.Preconditions.checkState;
+
 /**
  * This class is used to buffer the input data of the operator during the migration process,
  * which can not be processed temporarily due to related state migration not finished.
@@ -118,7 +120,6 @@ public class MigrationBuffer {
             mergedKeyGroups.add(keyGroupIndex);
             keyGroupMap.get(keyGroupIndex).forEach((channelKey, unit) -> {
                     if (unit.remoteConfirmed) {
-
                         unit.records.forEach(
                             record -> {
                                 try {
@@ -135,6 +136,42 @@ public class MigrationBuffer {
                     }
                 }
             );
+        }
+        return notifyEmpty && (recordsNum < MAX_RECORDS_NUM);
+    }
+
+    public boolean notifyStateMergedWithDisabledDR(
+            Set<Integer> keyGroupRange,
+            ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordConsumer,
+            ScalingContext scalingContext,
+            int fromTaskIndex) {
+        checkState(!ScaleConfig.Instance.ENABLE_DR, "notifyAllRemoteConfirmed should not be called in DR mode");
+        boolean notifyEmpty = (recordsNum == MAX_RECORDS_NUM);
+
+        for(int keyGroupIndex : keyGroupRange){
+            mergedKeyGroups.add(keyGroupIndex);
+            keyGroupMap.get(keyGroupIndex).forEach((channelKey, unit) -> {
+                if (unit.records == null){
+                    LOG.error("unit {} records is null", unit);
+                    throw new IllegalStateException("The buffer unit has been cleared, so it should not be cached in the buffer.");
+                }
+                unit.records.forEach(
+                        record -> {
+                            try {
+                                recordConsumer.accept(record, channelKey);
+                                recordsNum--;
+                            } catch (Exception e) {
+                                LOG.error("Failed to process record: {}", record, e);
+                            }
+                        }
+                );
+                unit.clear();
+                LOG.info("Unit {} cleared due to state merged, cache released: {}/{} at {}",
+                        unit, recordsNum, MAX_RECORDS_NUM, System.currentTimeMillis());
+
+            }
+            );
+            scalingContext.notifyAllRemoteConfirmed(keyGroupIndex,fromTaskIndex);
         }
         return notifyEmpty && (recordsNum < MAX_RECORDS_NUM);
     }

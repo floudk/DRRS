@@ -458,7 +458,7 @@ public class DStateHelper {
             switch (processingTimeDistribution) {
                 case UNIFORM:
                     double time = processingTimeMean - processingTimeStddev + localRandom.nextDouble() * 2 * processingTimeStddev;
-                    return (int) Math.max(10, time);
+                    return (int) Math.max(1, time);
                 case NORMAL:
                 case ZIPF:
                     throw new UnsupportedOperationException("Not implemented yet");

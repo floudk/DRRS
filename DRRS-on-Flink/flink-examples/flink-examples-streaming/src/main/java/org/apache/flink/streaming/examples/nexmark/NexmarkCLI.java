@@ -12,6 +12,8 @@ public class NexmarkCLI {
     static final String SPECIFIC_PARALLELISM = "specificParallelism";
     static final String WINDOW_STAGGER = "windowStagger";
     static final String SLIDE_INTERVAL = "slideIntervalInMs";
+    static final String PER_PRINT = "perPrint";
+
 
 
     String query;
@@ -23,6 +25,7 @@ public class NexmarkCLI {
     public int specificParallelism;
     String windowStagger;
     public long slideIntervalInMs;
+    public int perPrint;
 
 
     private NexmarkCLI(
@@ -34,7 +37,8 @@ public class NexmarkCLI {
             int copyInSource,
             int specificParallelism,
             String windowStagger,
-            long slideIntervalInMs) {
+            long slideIntervalInMs,
+            int perPrint) {
         this.kafkaBrokers = kafkaBrokers;
         this.query = query;
         this.windowSizeInSec = windowSizeInSec;
@@ -44,6 +48,7 @@ public class NexmarkCLI {
         this.specificParallelism = specificParallelism;
         this.windowStagger = windowStagger;
         this.slideIntervalInMs = slideIntervalInMs;
+        this.perPrint = perPrint;
     }
     public static NexmarkCLI fromArgs(String[] args) {
         MultipleParameterTool params = MultipleParameterTool.fromArgs(args);
@@ -79,7 +84,8 @@ public class NexmarkCLI {
         int parallelism = params.getInt(SPECIFIC_PARALLELISM, 4);
         String windowStagger = params.get(WINDOW_STAGGER, "RANDOM");
         long slideIntervalInMs = params.getLong(SLIDE_INTERVAL, 1000);
+        int perPrint = params.getInt(PER_PRINT, 200);
 
-        return new NexmarkCLI(kafkaBrokers, query, maxKeyNum, windowSizeInSec, markerInterval, copyInSource, parallelism, windowStagger, slideIntervalInMs);
+        return new NexmarkCLI(kafkaBrokers, query, maxKeyNum, windowSizeInSec, markerInterval, copyInSource, parallelism, windowStagger, slideIntervalInMs, perPrint);
     }
 }

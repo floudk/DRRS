@@ -56,7 +56,7 @@ public class TriggerBarrier extends ScaleBarrier{
     }
 
     @Override
-    public String toString(){return "Trigger Barrier";}
+    public String toString(){return "TB(" + subscaleID + ")";}
 
     @Override
     public boolean equals(Object obj) {

@@ -23,6 +23,9 @@ import org.apache.flink.runtime.event.AbstractEvent;
 import org.apache.flink.runtime.io.network.api.CheckpointBarrier;
 import org.apache.flink.runtime.io.network.partition.consumer.EndOfChannelStateEvent;
 
+import org.apache.flink.runtime.scale.ScaleConfig;
+import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
+
 import org.apache.flink.shaded.netty4.io.netty.buffer.ByteBuf;
 import org.apache.flink.shaded.netty4.io.netty.buffer.ByteBufAllocator;
 
@@ -291,6 +294,7 @@ public interface Buffer {
          */
         CONFIRM_BARRIER(false,true, false,false, false),
         TRIGGER_BARRIER(false,true, false,true, false),
+        TRIGGER_BARRIER_WITH_NO_DR(false,true,true,false,false),
 
         /**
          * Indicates that this subpartition state is fully recovered (emitted). Further data can be
@@ -356,6 +360,9 @@ public interface Buffer {
                 return PRIORITIZED_EVENT_BUFFER;
             } else if (event instanceof EndOfChannelStateEvent) {
                 return RECOVERY_COMPLETION;
+            } else if (event instanceof TriggerBarrier) {
+                checkState(!ScaleConfig.Instance.ENABLE_DR, "DR is enabled, but TriggerBarrier is used.");
+                return TRIGGER_BARRIER_WITH_NO_DR;
             } else if (!(event instanceof CheckpointBarrier)) {
                 return EVENT_BUFFER;
             }

@@ -106,8 +106,8 @@ public class Query8 {
         FileSink<Tuple2<Long,Long>> localFileSink = FileSink
                 .forRowFormat(new Path("file:///opt/output"), new PrintStyleEncoder())
                 .build();
-
-        joinedStream.keyBy(tuple -> tuple.f0).filter(tuple -> RandomUtils.nextInt(0, 50) == 0)
+        final int perPrint = cli.perPrint;
+        joinedStream.keyBy(tuple -> tuple.f0).filter(tuple -> RandomUtils.nextInt(0, perPrint) == 0)
                 .sinkTo(localFileSink).name("FileSink").setParallelism(cli.specificParallelism).slotSharingGroup("file-sink");
 
         env.execute("Nexmark Query8");
