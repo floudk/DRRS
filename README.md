@@ -10,7 +10,7 @@ All pre-requisites are the same as the original Flink, please refer to Flink's o
 
 ## Installation
 1. **Clone the repository**: Clone this repository and replace all the relevant modules and files in the original Flink source code with the ones provided in directory `DRRS-on-Flink`.
-2. **Build from source**: Use Maven to build the project. Since this is a research prototype, the build process requires bypassing several checks and validations. This involves removing certain plugins in the `pom.xml` and using additional maven flags `-DskipTests=true -Dlicense.skip=true -Dmaven.javadoc.skip=true -Dcheckstyle.failOnViolation=false -Dcheckstyle.module.EmptyLineSeparator.severity=ignore`.
+2. **Build from source**: Use Maven to build the project. Since this is a research prototype, the build process requires bypassing several checks and validations. This involves removing certain plugins in the `pom.xml` (see `DRRS-on-Flink/pom.xml`) and using additional maven flags `-DskipTests=true -Dlicense.skip=true -Dmaven.javadoc.skip=true -Dcheckstyle.failOnViolation=false -Dcheckstyle.module.EmptyLineSeparator.severity=ignore`.
 3. **Configure Flink**: Similar to setting up the original Flink environment, you'll need to configure Flink by updating configuration files, adding required JARs, and making any other necessary adjustments. For detailed instructions, also refer to Flink's official documentation.
 4. **Configure DRRS**: After building, move the `scale-conf.properties` file to the `conf` directory of your Flink build target directory.
 
