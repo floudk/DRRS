@@ -1,0 +1,127 @@
+# Ignore the Flinks/flink directory
+/flink/
+
+# ignore all .idea and .vscode directories
+**/.idea/
+**/.vscode/
+**/.github/
+**/.mvn/
+
+# ignore all target
+**/target/
+
+# ignore all LICENSE and NOTICE
+**/LICENSE*
+**/NOTICE*
+**/licenses/
+
+# ignore all dist including 'test' and resources
+**/*test*/
+**/*resources*/
+
+# all dependency-reduced-pom.xml
+**/dependency-reduced-pom.xml
+
+# all azure related files
+**/azure*
+
+# all about scala
+**/*scala*
+
+# all build-target
+**/build-target
+
+# all temp logs
+**/temp.log
+
+# flink0
+flink*/docs/
+flink*/flink-annotations/
+flink*/flink-connectors/
+flink*/flink-container/
+flink*/flink-contrib/
+
+flink*/flink-dist/
+flink*/flink-docs/
+flink*/flink-dstl/
+
+flink*/flink-examples/*
+!flink*/flink-examples/flink-examples-streaming/
+
+flink*/flink-filesystems/
+flink*/flink-formats/
+
+flink*/flink-java/
+flink*/flink-kubernetes/
+flink*/flink-libraries/
+flink*/flink-metrics/
+flink*/flink-optimizer/
+flink*/flink-python/
+flink*/flink-queryable-state/
+flink*/flink-quickstart/
+flink*/flink-rpc/
+
+flink*/flink-runtime-web/
+flink*/flink-state-backends/
+
+flink*/docs/
+flink*/tools/
+flink*/flink-yarn/
+flink*/flink-walkthroughs/
+
+flink*/flink-table/
+
+flink*/.asf.yaml
+flink*/.editorconfig
+flink*/mvnw*
+flink*/README.md
+
+__pycache__/
+
+# evaluation
+!evaluation/**/*test*
+
+evaluation/**/data/
+
+# temp files
+.last_env
+.last_compilation
+
+# evaluation/nexmark-flink
+evaluation/nexmark.bak
+
+evaluation/nexmark-flink/*
+
+!evaluation/nexmark-flink/conf
+!evaluation/nexmark-flink/bin
+
+evaluation/amazon-reviews/*.jsonl
+
+gc.log*
+Flink.code-workspace
+evaluation/**/*.npy
+evaluation/**/*.log
+
+
+evaluation/**/test/
+evaluation/**/*.bak*/
+evaluation/**/output/
+
+# executables
+evaluation/simple-test/state-order-simulator/src/simulator
+evaluation/simple-test/check/*.txt
+evaluation/simple-test/simple-evaluation/**/*.txt
+evaluation/simple-test/simple-evaluation/**/*.png
+
+baselines/
+
+evaluation/**/.rebuild
+evaluation/docker/utils/*
+evaluation/.last_hash
+evaluation/datagen/100k_a.csv
+evaluation/datagen/twitch_events.json
+evaluation/results/archive/*
+evaluation/results/*.svg
+evaluation/results/*.eps
+evaluation/results/*.png
+evaluation/docker/.check_cache
