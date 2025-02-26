@@ -1,5 +1,9 @@
 # Fine-Grained Dynamic Scaling for Stateful Stream Processing Systems
 
+# **⚠️ Important Notice**:  
+We are currently organizing the code related to automation scripts and baseline implementations. We guarantee that this work will be completed within two days after the ICDE Revision Due: **February 27, 2025 (11:59 PM AoE)**.
+If you are accessing this repository before that time, we kindly ask for your patience.
+
 ## Overview
 This repository presents **DRRS**, a novel on-the-fly dynamic scaling mechanism designed to achieve fine-grained scalability with minimal performance degradation in stateful stream processing systems during scaling events.
 
