@@ -59,9 +59,7 @@ To stop the running experiments, use:
 ./evaluate.sh stop
 ```
 
-After completing the evaluation, results will be saved in the `results` directory (or any other specified directory in the `evaluate.sh` script).
-
-You can use `./evaluate.sh stop` to stop the running experiments. After running the evaluation, the results will be stored in the `results` directory.
+After completing the evaluation, results will be saved in the `results` directory (or any other specified directory in your `evaluate.sh` script).
 We also provide a Jupyter notebook (`results_analysis.ipynb`) to help you extract the important metrics for any further analysis and visualization.
 
 
