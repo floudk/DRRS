@@ -4,6 +4,7 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
+import org.apache.flink.runtime.scale.ScalingContext;
 import org.apache.flink.runtime.scale.io.message.ScaleBuffer;
 import org.apache.flink.runtime.scale.io.message.ScaleEvent;
 import org.apache.flink.runtime.scale.io.message.local.StateBuffer;
@@ -42,11 +43,12 @@ public class ScaleCommOutAdapter {
 
     private final Map<SubscaleChannelID, Channel> remoteChannels = new ConcurrentHashMap<>();
     private final Map<SubscaleChannelID, CompletableFuture<Void>> pendingRequests = new ConcurrentHashMap<>();
-
+    private final Map<SubscaleChannelID, ChannelCloseHelper> channelCloseHelper = new ConcurrentHashMap<>();
 
     private List<ConnectionID> connectionIDs;
+    public ScalingContext scalingContext;
 
-    public ScaleCommOutAdapter(int ownerTaskIndex, JobVertexID jobVertexID, ScaleCommManager commManager){
+    public ScaleCommOutAdapter(int ownerTaskIndex, JobVertexID jobVertexID, ScaleCommManager commManager) {
         this.ownerTaskIndex = ownerTaskIndex;
         this.jobVertexID = jobVertexID;
         this.commManager = commManager;
@@ -62,13 +64,19 @@ public class ScaleCommOutAdapter {
     }
 
 
-    public void requestStatesWithCreatingChannel(int tartTask, List<Integer> requestingKeys, int subscaleID) throws InterruptedException {
+    public void requestStatesWithCreatingChannel(
+            int tartTask,
+            List<Integer> requestingKeys,
+            int subscaleID,
+            int expectedFirstKey) throws InterruptedException {
+        SubscaleChannelID channelID = new SubscaleChannelID(subscaleID, tartTask);
         Channel channel = commManager.connectRemoteTask(new TaskScaleID(jobVertexID, tartTask), connectionIDs.get(tartTask));
-        remoteChannels.put(new SubscaleChannelID(subscaleID, tartTask), channel);
+        remoteChannels.put(channelID, channel);
         LOG.info("Established connection with remote task: {}-{}", tartTask, subscaleID);
         ScaleNettyMessage.ScaleEventMessage message = new ScaleNettyMessage.ScaleEventMessage(
-                jobVertexID, ownerTaskIndex, tartTask, new ScaleEvent.RequestStates(ownerTaskIndex, requestingKeys, subscaleID));
-        sendMessage(channel, message, "request state");
+                jobVertexID, ownerTaskIndex, tartTask, new ScaleEvent.StateRequestEvent(ownerTaskIndex, requestingKeys, subscaleID,expectedFirstKey));
+        sendMessage(channel, message, "request state", false);
+        channelCloseHelper.put(channelID, new ChannelCloseHelper(requestingKeys.size()));
     }
     public void onRequestedStatesReceived(int subscaleID, int sourceTask, Channel channel){
 
@@ -79,12 +87,18 @@ public class ScaleCommOutAdapter {
         LOG.info("Established connection: {}-{}", channelID, System.identityHashCode(pendingRequests.get(channelID)));
     }
 
-    public void ackStateReceived(int ackTask, int keyGroupIndex, int subscaleID) {
-        Channel channel = remoteChannels.get(new SubscaleChannelID(subscaleID, ackTask));
+    public void ackStateReceived(int ackTask, int keyGroupIndex, int subscaleID, int expectedNext) {
+        SubscaleChannelID channelID = new SubscaleChannelID(subscaleID, ackTask);
+        Channel channel = remoteChannels.get(channelID);
         checkNotNull(channel, "Channel to " + ackTask + "-" + subscaleID + " is not established");
         ScaleNettyMessage.ScaleEventMessage message = new ScaleNettyMessage.ScaleEventMessage(
-                jobVertexID, ownerTaskIndex, ackTask, new ScaleEvent.AcknowledgeStates(ownerTaskIndex, keyGroupIndex));
-        sendMessage(channel, message, "acknowledge state");
+                jobVertexID,
+                ownerTaskIndex,
+                ackTask,
+                new ScaleEvent.AcknowledgeStates(ownerTaskIndex, keyGroupIndex, expectedNext));
+        LOG.info("Send acknowledge state to remote task: {}", ackTask);
+        sendMessage(channel, message, "acknowledge state", true);
+        channelCloseHelper.get(channelID).decrease();
     }
 
     public void sendStateBuffer(int targetTaskIndex, StateBuffer stateBuffer, int subscaleID) {
@@ -103,7 +117,7 @@ public class ScaleCommOutAdapter {
                             commManager.serializers.get(sender).stateSnapshotTransformerGetter
                     ));
             LOG.info("Send state buffer to remote task: {}", targetTaskIndex);
-            sendMessage(channel, message, "state buffer");
+            sendMessage(channel, message, "state buffer", false);
         } catch (Exception e) {
             LOG.error("Failed to serialize state buffer", e);
             throw new RuntimeException("Failed to serialize state buffer", e);
@@ -121,20 +135,22 @@ public class ScaleCommOutAdapter {
             Channel newChannel = remoteChannels.get(channelID);
             checkNotNull(newChannel, "Channel to " + targetTaskIndex + "-" + subscaleID + " is not established");
             LOG.info("Send reroute buffer to remote task: {}, seq {}, involved: {}", targetTaskIndex, buffer.sequenceNumber, buffer.confirmedKeys);
-            sendMessage(newChannel, message, "reroute buffer "+targetTaskIndex);
+            sendMessage(newChannel, message, "reroute buffer "+targetTaskIndex, false);
         });
     }
 
     public void closeChannels(int subscaleID) {
-        LOG.info("Close all channels for subscale {}", subscaleID);
         remoteChannels.entrySet().removeIf(entry -> {
             SubscaleChannelID channelID = entry.getKey();
             Channel channel = entry.getValue();
             if (channelID.subscaleID == subscaleID) {
-                channel.close().addListener(future -> {
-                    if (!future.isSuccess()) {
-                        LOG.error("Error while closing channel", future.cause());
-                    }
+                channelCloseHelper.get(channelID).future.thenRun(() -> {
+                    LOG.info("Close channel: {}-{}", channelID.targetTaskIndex, channelID.subscaleID);
+                    channel.close().addListener(future -> {
+                        if (!future.isSuccess()) {
+                            LOG.error("Error while closing channel", future.cause());
+                        }
+                    });
                 });
                 return true;
             }
@@ -144,11 +160,14 @@ public class ScaleCommOutAdapter {
     }
 
 
-    private void sendMessage(Channel channel, ScaleNettyMessage message, String logMessage) {
+    private void sendMessage(Channel channel, ScaleNettyMessage message, String logMessage, boolean isAck) {
         channel.writeAndFlush(message)
                 .addListener((ChannelFutureListener) future -> {
                     if (!future.isSuccess()) {
                         LOG.error("Failed to send event to remote task", future.cause());
+                    }
+                    if (isAck) {
+                        scalingContext.ackSent();
                     }
                     LOG.info("Successfully sent {} to remote task",logMessage);
                 });
@@ -215,6 +234,23 @@ public class ScaleCommOutAdapter {
             }
         }
         return count;
+    }
+    static class ChannelCloseHelper{
+        public int count;
+        public CompletableFuture<Void> future;
+        public ChannelCloseHelper(int count){
+            this.count = count;
+            this.future = new CompletableFuture<>();
+        }
+        public void decrease(){
+            count--;
+            if(count == 0){
+                future.complete(null);
+            }else{
+                LOG.info("Left {} pending acks", count);
+            }
+        }
+
     }
 
 }

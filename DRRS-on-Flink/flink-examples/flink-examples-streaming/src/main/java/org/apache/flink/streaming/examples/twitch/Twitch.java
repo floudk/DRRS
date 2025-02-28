@@ -1,5 +1,7 @@
 package org.apache.flink.streaming.examples.twitch;
 
+import org.apache.commons.lang3.RandomUtils;
+
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.serialization.Encoder;
@@ -21,12 +23,14 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 
 
+import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.examples.twitch.TwitchEvent.TwitchEventDeserializationSchema;
 import org.apache.flink.util.Collector;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Map;
 
 public class Twitch {
@@ -37,6 +41,9 @@ public class Twitch {
 
     static int aggParallelism;
     static int sourceParallelism;
+    static boolean enableKeyShuffling;
+
+    static int perPrint;
 
     public static void main(String[] args) throws Exception {
         CLI.fromArgs(args);
@@ -93,8 +100,22 @@ public class Twitch {
                 .uid("op4")
                 .slotSharingGroup("engagement-retention");
 
+        DataStream<Tuple3<String, Double, Long>> preprocessedStream;
+        if (enableKeyShuffling) {
+            // Add optional cross-stream analysis and shuffle
+            preprocessedStream = op4_retention
+                    .rebalance()
+                    .process(new CrossStreamAnalyzer())
+                    .name("Cross-Stream-Analyzer")
+                    .uid("op4_5")
+                    .slotSharingGroup("engagement-retention");
+        } else {
+            // Use original stream directly
+            preprocessedStream = op4_retention;
+        }
+
         // 5. viewer-loyalty (Test Operator)
-        DataStream<Tuple4<String, Double, Long, Integer>> op5_loyalty = op4_retention
+        DataStream<Tuple4<String, Double, Long, Integer>> op5_loyalty = preprocessedStream
                 .keyBy(t -> t.f0)
                 .process(new ViewerLoyaltyCalculator())
                 .name("Viewer-Loyalty-Calculator")
@@ -125,11 +146,11 @@ public class Twitch {
                 .forRowFormat(new Path("file:///opt/output"), new FileSinkEncoder())
                 .build();
         // remove some output to reduce the output pressure
-        op7_metrics.filter(t -> t % 100 == 0)
+        op7_metrics.filter(t -> RandomUtils.nextInt(0, perPrint) == 0)
                 .sinkTo(fileSink)
                 .name("FileSink")
                 .uid("op8")
-                .setParallelism(aggParallelism)
+                .setParallelism(1)
                 .slotSharingGroup("trend-metrics");
 
         env.execute("Twitch");
@@ -230,6 +251,48 @@ public class Twitch {
         }
     }
 
+    // Operator 4.5: (optional) Simulate viewer interactions and shuffle
+    public static class CrossStreamAnalyzer
+            extends ProcessFunction<Tuple3<String, Double, Long>, Tuple3<String, Double, Long>> {
+
+        private static final long serialVersionUID = 1L;
+        private transient LinkedList<Double> recentScores;
+        private static final int MAX_RECENT = 10;  // Keep only last 10 scores
+
+        @Override
+        public void open(Configuration parameters) {
+            recentScores = new LinkedList<>();
+        }
+
+        @Override
+        public void processElement(Tuple3<String, Double, Long> event, Context ctx,
+                                   Collector<Tuple3<String, Double, Long>> out) {
+            double retentionScore = event.f1;
+
+            // Add current score and maintain size limit
+            recentScores.addLast(retentionScore);
+            if (recentScores.size() > MAX_RECENT) {
+                recentScores.removeFirst();
+            }
+
+            // Simple adjustment based on recent average
+            double sum = 0;
+            int count = 0;
+            for (Double score : recentScores) {
+                if (score != retentionScore) {  // Exclude current score
+                    sum += score;
+                    count++;
+                }
+            }
+
+            // Adjust score slightly based on recent history
+            double adjustedRetention = count > 0
+                    ? (retentionScore * 0.8 + (sum / count) * 0.2)
+                    : retentionScore;
+
+            out.collect(new Tuple3<>(event.f0, adjustedRetention, event.f2));
+        }
+    }
     // Operator 5 (Test Operator): Calculate viewer loyalty
     public static class ViewerLoyaltyCalculator
             extends KeyedProcessFunction<String, Tuple3<String, Double, Long>,
@@ -377,6 +440,8 @@ public class Twitch {
             markerInterval = params.getInt(MARKER_INTERVAL, 100);
             aggParallelism = params.getInt(AGG_PARALLELISM, 4);
             sourceParallelism = params.getInt(SOURCE_PARALLELISM, 4);
+            enableKeyShuffling = params.getBoolean("enableKeyShuffling", false);
+            perPrint = params.getInt("perPrint", 800);
         }
     }
 }

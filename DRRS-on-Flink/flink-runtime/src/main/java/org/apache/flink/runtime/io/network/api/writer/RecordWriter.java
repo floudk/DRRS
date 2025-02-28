@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.api.writer;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.DataOutputSerializer;
@@ -44,6 +45,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 
@@ -312,17 +314,17 @@ public abstract class RecordWriter<T extends IOReadableWritable> implements Avai
         }
     }
 
-    public Map<Integer,RepartitionBuffersWithPartialRecord> emitConfirmBarriers(
+    public void emitConfirmBarriers(
             ConfirmBarrier confirmBarrier,
-            Set<Integer> affectedSourceSubtasks){
+            Set<Integer> affectedSourceSubtasks,
+            Consumer<RepartitionBuffersWithPartialRecord> repartitionConsumer){
         if (!ScaleConfig.Instance.ENABLE_DR){
             // skip emit confirm barrier
-            return null;
+            return;
         }
 
-        LOG.info("Emit scale confirm barrier to downstream {}", affectedSourceSubtasks);
         try {
-            return targetPartition.emitConfirmBarrierEvent(confirmBarrier, affectedSourceSubtasks);
+            targetPartition.emitConfirmBarrierEvent(confirmBarrier, affectedSourceSubtasks,repartitionConsumer);
         } catch (IOException e) {
             LOG.error("Failed to emit scale barriers to downstream tasks.", e);
             throw new RuntimeException(e);

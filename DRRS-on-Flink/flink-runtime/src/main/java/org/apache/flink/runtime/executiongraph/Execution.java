@@ -44,8 +44,11 @@ import org.apache.flink.runtime.jobmaster.LogicalSlot;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.operators.coordination.TaskNotRunningException;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.scheduler.strategy.ConsumerVertexGroup;
 import org.apache.flink.runtime.scheduler.strategy.ExecutionVertexID;
 import org.apache.flink.runtime.shuffle.PartitionDescriptor;
@@ -1682,7 +1685,7 @@ public class Execution
                 ).thenApply(ack -> null);
     }
 
-    public CompletableFuture<Void> triggerSubscale(Map<Integer,Integer> involvedKeyGroups, int subscaleID){
+    public CompletableFuture<Void> triggerSubscale(Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID){
         final TaskManagerGateway taskManagerGateway = getTaskManagerGateway();
         return CompletableFuture.supplyAsync(
             () -> taskManagerGateway.triggerSubscale(attemptId, involvedKeyGroups, subscaleID, rpcTimeout))
@@ -1703,5 +1706,62 @@ public class Execution
 
     public CompletableFuture<Void> finishSubscale() {
         return triggerSubscale(Collections.emptyMap(), -1);
+    }
+
+    public CompletableFuture<Map<Integer, Long>> getStateSize() {
+        final TaskManagerGateway taskManagerGateway = getTaskManagerGateway();
+        return CompletableFuture.supplyAsync(
+            () -> taskManagerGateway.getStateSize(attemptId, rpcTimeout))
+                .thenCompose(Function.identity())
+                .whenComplete(
+                        (stateSize, failure) ->{
+                            if(failure != null){
+                                throw new RuntimeException("Can not get state size for task "
+                                        + vertex.getTaskNameWithSubtaskIndex()
+                                        + " - TaskManager ("
+                                        + getAssignedResourceLocation()
+                                        + ") not responding after a rpcTimeout of "
+                                        + rpcTimeout);
+                            }
+                        }
+                );
+    }
+
+    public CompletableFuture<TargetOperatorMetrics> getScaleMetrics(){
+        final TaskManagerGateway taskManagerGateway = getTaskManagerGateway();
+        return CompletableFuture.supplyAsync(
+            () -> taskManagerGateway.getScaleMetrics(attemptId))
+                .thenCompose(Function.identity())
+                .whenComplete(
+                        (scaleMetrics, failure) ->{
+                            if(failure != null){
+                                throw new RuntimeException("Can not get scale metrics for task "
+                                        + vertex.getTaskNameWithSubtaskIndex()
+                                        + " - TaskManager ("
+                                        + getAssignedResourceLocation()
+                                        + ") not responding after a rpcTimeout of "
+                                        + rpcTimeout);
+                            }
+                        }
+                );
+    }
+
+    public CompletableFuture<UpstreamOperatorMetrics> getUpstreamScaleMetrics(){
+        final TaskManagerGateway taskManagerGateway = getTaskManagerGateway();
+        return CompletableFuture.supplyAsync(
+                        () -> taskManagerGateway.getUpstreamScaleMetrics(attemptId))
+                .thenCompose(Function.identity())
+                .whenComplete(
+                        (scaleMetrics, failure) ->{
+                            if(failure != null){
+                                throw new RuntimeException("Can not get scale metrics for task "
+                                        + vertex.getTaskNameWithSubtaskIndex()
+                                        + " - TaskManager ("
+                                        + getAssignedResourceLocation()
+                                        + ") not responding after a rpcTimeout of "
+                                        + rpcTimeout);
+                            }
+                        }
+                );
     }
 }

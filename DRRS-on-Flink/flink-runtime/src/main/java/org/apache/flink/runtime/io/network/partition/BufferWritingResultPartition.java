@@ -41,10 +41,9 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkElementIndex;
@@ -163,6 +162,7 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
     @Override
     public void emitRecord(ByteBuffer record, int targetSubpartition) throws IOException {
         totalWrittenBytes += record.remaining();
+
         // LOG.info("{} emit record with {} bytes", getOwningTaskName(), record.remaining());
         BufferBuilder buffer = appendUnicastDataForNewRecord(record, targetSubpartition);
 
@@ -443,6 +443,7 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
         final BufferBuilder bufferBuilder = unicastBufferBuilders[targetSubpartition];
         if (bufferBuilder != null) {
             int bytes = bufferBuilder.finish();
+
             resultPartitionBytes.inc(targetSubpartition, bytes);
             numBytesOut.inc(bytes);
             numBuffersOut.inc();
@@ -539,11 +540,11 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
     }
 
     @Override
-    public Map<Integer,RepartitionBuffersWithPartialRecord> emitConfirmBarrierEvent(
-            AbstractEvent confirmBarrier, Set<Integer> affectedSourceSubtasks) throws IOException{
+    public void emitConfirmBarrierEvent(
+            AbstractEvent confirmBarrier,
+            Set<Integer> affectedSourceSubtasks,
+            Consumer<RepartitionBuffersWithPartialRecord> repartitionConsumer) throws IOException{
         checkInProduceState();
-
-        Map<Integer,RepartitionBuffersWithPartialRecord> repartitionBuffersWithPartialRecordMap = new HashMap<>();
 
         for(int i = 0; i < subpartitions.length; i++){
             if (!affectedSourceSubtasks.contains(i)) {
@@ -554,17 +555,17 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
 
             LOG.info("Emit event {} with to subpartition {}",
                     confirmBarrier,targetSubpartition.getSubpartitionInfo());
+
             finishUnicastBufferBuilder(i);
 
             try (BufferConsumer eventBufferConsumer = ScaleBarrier.toBufferConsumer(
                     confirmBarrier, Buffer.DataType.CONFIRM_BARRIER)) {
-                totalWrittenBytes += eventBufferConsumer.getWrittenBytes();
-                subpartitions[i].add(eventBufferConsumer.copy(), 0);
-//                repartitionBuffersWithPartialRecordMap.put(i,
-//                        targetSubpartition.addConfirmBarrierAsSemiPriority(eventBufferConsumer.copy()));
+//                totalWrittenBytes += eventBufferConsumer.getWrittenBytes();
+//                subpartitions[i].add(eventBufferConsumer.copy(), 0);
+                targetSubpartition.addConfirmBarrierAsSemiPriority(eventBufferConsumer.copy(),repartitionConsumer);
             }
         }
-        return repartitionBuffersWithPartialRecordMap;
+
     }
 
 }

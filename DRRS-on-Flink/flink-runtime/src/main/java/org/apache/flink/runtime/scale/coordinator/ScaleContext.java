@@ -24,7 +24,6 @@ import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.scale.ScaleConfig;
 import org.apache.flink.runtime.scale.state.FlexibleKeyGroupRange;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 
@@ -54,7 +53,6 @@ public class ScaleContext {
     private final ExecutionJobVertex executionJobVertex;
     private final int scaleFromParallelism;
     private final int scaleToParallelism;
-    private final MigrateStrategyMode migrateStrategyMode;
 
     private final Map<ExecutionJobVertex, IntermediateResult> upstreamJobVertices = new HashMap<>();
     private final Map<ExecutionJobVertex, IntermediateResult> downstreamJobVertices = new HashMap<>();
@@ -63,14 +61,15 @@ public class ScaleContext {
     private List<FlexibleKeyGroupRange> oldKeyGroupPartitions;
     private final List<ConnectionID> connectionIDS = new ArrayList<>();
 
+    public List<ExecutionVertex> upstreamTaskVertexCache;
+
     public CompletableFuture<Void> resetFuture;
 
     public ScaleContext(
-            ExecutionJobVertex jobVertex, int scaleToParallelism, MigrateStrategyMode strategy){
+            ExecutionJobVertex jobVertex, int scaleToParallelism){
         executionJobVertex = jobVertex;
         this.scaleFromParallelism = jobVertex.getParallelism();
         this.scaleToParallelism = scaleToParallelism;
-        this.migrateStrategyMode = strategy;
         jobVertex.getInputs().forEach(
                 (intermediateResult) -> upstreamJobVertices.put(intermediateResult.getProducer(), intermediateResult)
         );
@@ -105,9 +104,6 @@ public class ScaleContext {
     public int getOldParallelism() {
         return scaleFromParallelism;
     }
-    public MigrateStrategyMode getMigrateStrategy() {
-        return migrateStrategyMode;
-    }
     public ExecutionJobVertex getJobVertex() {
         return executionJobVertex;
     }
@@ -125,6 +121,15 @@ public class ScaleContext {
     }
     public Map<ExecutionJobVertex, IntermediateResult> getUpstreamJobVertices() {
         return upstreamJobVertices;
+    }
+    public List<ExecutionVertex> getUpstreamTaskVertices() {
+        if (upstreamTaskVertexCache == null) {
+            upstreamTaskVertexCache = new ArrayList<>();
+            upstreamJobVertices.keySet().forEach(
+                    (upstreamJobVertex) -> upstreamTaskVertexCache.addAll(Arrays.asList(upstreamJobVertex.getTaskVertices()))
+            );
+        }
+        return upstreamTaskVertexCache;
     }
     public Map<ExecutionJobVertex, IntermediateResult> getDownstreamJobVertices() {
         return downstreamJobVertices;

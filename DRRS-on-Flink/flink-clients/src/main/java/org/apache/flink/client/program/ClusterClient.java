@@ -222,8 +222,7 @@ public interface ClusterClient<T> extends AutoCloseable {
     default CompletableFuture<String> triggerScale(
             JobID jobId,
             String operatorName,
-            int newParallelism,
-            String strategySelector){
+            int newParallelism){
         throw new UnsupportedOperationException("This cluster client"
                 + this.getClass().getName() + " does not support triggerScale");
     }

@@ -21,9 +21,11 @@ import org.apache.flink.runtime.checkpoint.channel.InputChannelInfo;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannel;
 import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.barrier.ConfirmBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 
 import java.io.IOException;
 import java.util.List;
@@ -40,13 +42,17 @@ public interface ScalableTask {
     void setInvokableRestoreFuture(CompletableFuture<Void> invokableRestoreFuture);
 
 
-    void resetScale(MigrateStrategyMode migrateStrategyMode) throws IOException;
+    void resetScale() throws IOException;
 
-    void triggerSubscale(Map<Integer,Integer> involvedKeyGroups,int subscaleID);
+    void triggerSubscale(Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID);
 
     // sync signals
     void onTriggerBarrier(TriggerBarrier tb, InputChannelInfo channelInfo) throws IOException;
     void onConfirmBarrier(ConfirmBarrier cb,  InputChannelInfo channelInfo);
 
     void onCompleteBarrier();
+
+    Map<Integer, Long> getStateSize();
+    TargetOperatorMetrics getTargetOperatorScaleMetrics();
+    UpstreamOperatorMetrics getUpstreamScaleMetrics();
 }

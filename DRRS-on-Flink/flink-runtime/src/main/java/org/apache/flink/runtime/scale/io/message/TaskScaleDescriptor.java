@@ -20,7 +20,6 @@ package org.apache.flink.runtime.scale.io.message;
 
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.scale.coordinator.ScaleContext;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 
 import java.io.Serializable;
 import java.util.List;
@@ -29,21 +28,16 @@ import java.util.List;
  * Trigger Barrier to notify the task to initialize and start the scale operation.
  */
 public class TaskScaleDescriptor implements Serializable {
-    private static final long serialVersionUID = 14L;
+    private static final long serialVersionUID = 1L;
 
     private final List<ConnectionID> allConnectionIds;
-    private final MigrateStrategyMode migrateStrategyMode;
     private final Integer newParallelism;
 
     public TaskScaleDescriptor(ScaleContext context){
         this.allConnectionIds = context.getConnectionIDS();
-        this.migrateStrategyMode = context.getMigrateStrategy();
         this.newParallelism = context.getNewParallelism();
     }
 
-    public MigrateStrategyMode getMigrateStrategy() {
-        return migrateStrategyMode;
-    }
     public List<ConnectionID> getAllConnectionIds() {
         return allConnectionIds;
     }

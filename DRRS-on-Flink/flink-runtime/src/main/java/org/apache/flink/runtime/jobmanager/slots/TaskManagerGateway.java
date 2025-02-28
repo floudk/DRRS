@@ -31,8 +31,11 @@ import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.rpc.RpcTimeout;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorOperatorEventGateway;
 import org.apache.flink.util.SerializedValue;
 
@@ -179,5 +182,9 @@ public interface TaskManagerGateway extends TaskExecutorOperatorEventGateway {
      * This method is used to notify the upstream tasks to send trigger/confirms to the scaled tasks
      */
     CompletableFuture<Acknowledge> triggerSubscale(
-            ExecutionAttemptID attemptId, Map<Integer,Integer> involvedKeyGroups, int subscaleID,Time rpcTimeout);
+            ExecutionAttemptID attemptId, Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID, Time rpcTimeout);
+
+    CompletableFuture<Map<Integer, Long>> getStateSize(ExecutionAttemptID attemptId, Time rpcTimeout);
+    CompletableFuture<TargetOperatorMetrics> getScaleMetrics(ExecutionAttemptID attemptId);
+    CompletableFuture<UpstreamOperatorMetrics> getUpstreamScaleMetrics(ExecutionAttemptID attemptId);
 }

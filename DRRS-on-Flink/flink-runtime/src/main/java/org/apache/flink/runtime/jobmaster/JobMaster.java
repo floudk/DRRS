@@ -85,7 +85,7 @@ import org.apache.flink.runtime.rpc.FencedRpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.RpcServiceUtils;
 import org.apache.flink.runtime.scale.coordinator.ScaleCoordinator;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.rest.ScaleMetricsInfo;
 import org.apache.flink.runtime.scheduler.DefaultScheduler;
 import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
 import org.apache.flink.runtime.scheduler.SchedulerNG;
@@ -1574,16 +1574,21 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId>
             TriggerId triggerID,
             String operatorName,
             int newParallelism,
-            MigrateStrategyMode strategyMode,
             Time timeout){
-        scaleCoordinator.triggerScale(triggerID, operatorName, newParallelism, strategyMode);
+        scaleCoordinator.triggerScale(triggerID, operatorName, newParallelism);
         return CompletableFuture.completedFuture(null);
     }
 
     @Override
-    public CompletableFuture<String> getScaleStatus(TriggerId triggerId){
+    public CompletableFuture<ScaleMetricsInfo> getScaleStatus(TriggerId triggerId){
         return CompletableFuture.completedFuture(scaleCoordinator.getScaleStatus(triggerId));
     }
+
+    @Override
+    public CompletableFuture<Map<Integer,Long>> getStateSize(JobVertexID vertexID){
+        return CompletableFuture.completedFuture(scaleCoordinator.getStateSize(vertexID));
+    }
+
 
     @Override
     public CompletableFuture<Acknowledge> triggerSubscale(
@@ -1604,9 +1609,5 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId>
             return FutureUtils.completedExceptionally(
                     new ExecutionGraphException("The execution attempt " + executionAttemptID + " was not found."));
         }
-    }
-    @Override
-    public void notifySubscaleComplete(ExecutionAttemptID executionAttemptID, Set<Integer> completedKeyGroups) {
-        scaleCoordinator.notifySubscaleComplete(executionAttemptID, completedKeyGroups);
     }
 }

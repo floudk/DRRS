@@ -7,6 +7,7 @@ import org.apache.flink.runtime.scale.ScalingContext;
 import org.apache.flink.runtime.scale.io.ScaleCommListener;
 import org.apache.flink.runtime.scale.io.ScaleCommOutAdapter;
 import org.apache.flink.runtime.scale.io.message.RerouteCache;
+import org.apache.flink.runtime.scale.io.message.ScaleEvent;
 import org.apache.flink.runtime.scale.io.message.barrier.ConfirmBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
 import org.apache.flink.runtime.scale.util.ThrowingBiConsumer;
@@ -52,18 +53,17 @@ public class DisableSubscaleMigrate extends FluidMigrate {
     }
 
     @Override
-    protected void migrateStatesAsync(int targetTaskIndex, List<Integer> requestedStates, int subscaleID){
+    protected void migrateStatesAsync(ScaleEvent.StateRequestEvent request){
         CompletableFuture.runAsync(() -> {
-
-            requestedStates.forEach(
+            request.requestedStates.forEach(
                     (keygroup)->{
                         try {
-                            CompletableFuture<Void> transmitComplete = new CompletableFuture<>();
+                            CompletableFuture<Integer> transmitComplete = new CompletableFuture<>();
                             stateTransmitCompletes.put(keygroup, transmitComplete);
                             final List<Integer> keygroups = List.of(keygroup);
                             CompletableFuture<Void> adapterConsumeFuture = new CompletableFuture<>();
                             collectAndMigrateStates(
-                                    targetTaskIndex, keygroups, adapterConsumeFuture, subscaleID);
+                                    request.eventSenderIndex, keygroups, adapterConsumeFuture, request.subscaleID);
                             rerouteManager.setStateConsumeFuture(keygroup, adapterConsumeFuture);
                             // wait for the state to be transmitted
                             transmitComplete.join();

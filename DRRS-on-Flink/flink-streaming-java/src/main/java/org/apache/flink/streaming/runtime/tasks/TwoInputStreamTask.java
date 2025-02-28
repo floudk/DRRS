@@ -20,7 +20,6 @@ package org.apache.flink.streaming.runtime.tasks;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 import org.apache.flink.streaming.api.operators.TwoInputStreamOperator;
 import org.apache.flink.streaming.runtime.io.StreamTwoInputProcessorFactory;
 import org.apache.flink.streaming.runtime.io.checkpointing.CheckpointBarrierHandler;
@@ -114,10 +113,10 @@ public class TwoInputStreamTask<IN1, IN2, OUT> extends AbstractTwoInputStreamTas
                         getCanEmitBatchOfRecords());
     }
     @Override
-    public void resetScale(MigrateStrategyMode migrateStrategyMode) throws IOException {
+    public void resetScale() throws IOException {
         IndexedInputGate[] inputGates = checkpointBarrierHandler.getAllInputGates();
         LOG.info("Reset scale for task {} with input gates {} {}", getTaskNameWithSubtaskAndId(), inputGates.length, inputGates);
-        subtaskSubscaleHandler.reset(migrateStrategyMode, inputGates);
+        subtaskSubscaleHandler.reset(inputGates);
     }
 
     // This is needed for StreamMultipleInputProcessor#processInput to preserve the existing

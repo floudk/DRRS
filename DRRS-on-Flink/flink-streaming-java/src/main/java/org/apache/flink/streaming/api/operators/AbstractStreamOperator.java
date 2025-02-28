@@ -40,6 +40,7 @@ import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.metrics.groups.InternalOperatorMetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
+import org.apache.flink.runtime.scale.io.KeyGroupRecordTracker;
 import org.apache.flink.runtime.scale.io.message.local.StateBuffer;
 import org.apache.flink.runtime.scale.state.FlexibleKeyGroupRange;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
@@ -54,7 +55,6 @@ import org.apache.flink.runtime.state.heap.StateMap;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.StreamOperatorStateHandler.CheckpointedStreamOperator;
 import org.apache.flink.streaming.api.watermark.Watermark;
-import org.apache.flink.streaming.runtime.scale.ScaleEvaEvent;
 import org.apache.flink.streaming.runtime.streamrecord.LatencyMarker;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
@@ -70,6 +70,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.flink.util.Preconditions.checkState;
@@ -160,6 +161,8 @@ public abstract class AbstractStreamOperator<OUT>
     //  Life Cycle
     // ------------------------------------------------------------------------
 
+    private KeyGroupRecordTracker keyGroupRecordTracker;
+
     @Override
     public void setup(
             StreamTask<?, ?> containingTask,
@@ -233,6 +236,9 @@ public abstract class AbstractStreamOperator<OUT>
 
         stateKeySelector1 = config.getStatePartitioner(0, getUserCodeClassloader());
         stateKeySelector2 = config.getStatePartitioner(1, getUserCodeClassloader());
+
+        keyGroupRecordTracker = new KeyGroupRecordTracker(
+                environment.getExecutionConfig().getMaxParallelism(),false);
     }
 
     /**
@@ -480,6 +486,7 @@ public abstract class AbstractStreamOperator<OUT>
         return stateHandler.getPartitionedState(namespace, namespaceSerializer, stateDescriptor);
     }
 
+
     @Override
     @SuppressWarnings({"unchecked", "rawtypes"})
     public void setKeyContextElement1(StreamRecord record) throws Exception {
@@ -509,6 +516,7 @@ public abstract class AbstractStreamOperator<OUT>
         if (selector != null) {
             Object key = selector.getKey(record.getValue());
             setCurrentKey(key);
+            keyGroupRecordTracker.updateInputRecordMetrics(stateHandler.getKeyGroupByKey(key).orElse(-1));
         }
     }
 
@@ -563,6 +571,7 @@ public abstract class AbstractStreamOperator<OUT>
         // all operators are tracking latencies
         this.latencyStats.reportLatency(marker);
         if (getOperatorName().contains("FileSink: Writer")){
+            this.latencyStats.reportCustomizedLatency(marker);
             LOG.info("Marker {}: creationTime={}, outputTime={} in Operator {}",
                     marker.emitOperatorName, marker.getMarkedTime(), marker.setOutputTime(), getOperatorName());
         }
@@ -715,8 +724,17 @@ public abstract class AbstractStreamOperator<OUT>
     }
 
     @Override
-    public  StateSnapshotTransformer getStateSnapshotTransformer(String stateName){
+    public StateSnapshotTransformer getStateSnapshotTransformer(String stateName){
         return stateHandler.getStateSnapshotTransformer(stateName);
     }
 
+    @Override
+    public Map<Integer, Long> getStateSizes(){
+        return stateHandler.getStateSizes();
+    }
+
+    @Override
+    public Long[] getProcessingKeyCounts(){
+        return keyGroupRecordTracker.getTotalCounts();
+    }
 }

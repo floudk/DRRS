@@ -4,6 +4,7 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.executiongraph.Execution;
 import org.apache.flink.runtime.executiongraph.ExecutionJobVertex;
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.state.FlexibleKeyGroupRange;
 
 import org.slf4j.Logger;
@@ -12,10 +13,8 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -26,7 +25,6 @@ import static org.apache.flink.util.Preconditions.checkState;
 public class SubscaleHandler {
     private static final Logger LOG = LoggerFactory.getLogger(SubscaleHandler.class);
 
-    private final String operatorName;
     private final List<Execution> upstreamExecutions = new ArrayList<>();
 
 
@@ -38,12 +36,12 @@ public class SubscaleHandler {
     public final CompletableFuture<Void> scaleCompleteFuture;
     private final Boolean[] scaleCompleteAcknowledgement;
 
-    public Set<Integer> migratingKeyGroups = new HashSet<>();
     AtomicInteger subscaleIDRetriever  = new AtomicInteger(0);
 
+    public final ScaleContext scaleContext;
 
     public SubscaleHandler(ScaleContext scaleContext, CompletableFuture<Void> scaleCompleteFuture) {
-        this.operatorName = scaleContext.getJobVertexName();
+        this.scaleContext = scaleContext;
 
         for (ExecutionJobVertex upstreamJobVertex : scaleContext.getUpstreamJobVertices().keySet()) {
             for (ExecutionVertex vertex : upstreamJobVertex.getTaskVertices()) {
@@ -75,9 +73,9 @@ public class SubscaleHandler {
         Arrays.fill(scaleCompleteAcknowledgement, false);
     }
 
-    public void trigger(List<Integer> involvedKeyGroups) {
+    public void trigger(List<Integer> involvedKeyGroups, Map<Integer, Long> keyGroupStateSize) {
         LOG.info("Triggering subscale with involved key groups: {}", involvedKeyGroups);
-        Map<Integer, Integer> newPartitioning = new HashMap<>();
+        Map<Integer, SubscaleTriggerInfo> info = new HashMap<>();
 
         // check all key groups: position.f0 != position.f1
         involvedKeyGroups.forEach(
@@ -85,20 +83,19 @@ public class SubscaleHandler {
                     Tuple2<Integer, Integer> position = positionedKeyGroups.get(kg);
                     checkState(!position.f0.equals(position.f1),
                             "Key group " + kg + " has already been moved to the target partition: " + positionedKeyGroups);
-                    newPartitioning.put(kg, position.f1);
+                    info.put(kg, new SubscaleTriggerInfo(position.f1, keyGroupStateSize.get(kg)));
                 }
         );
 
-        migratingKeyGroups.addAll(involvedKeyGroups);
         // trigger subscale after readyForSubscaleFuture is completed
         int subscaleID = subscaleIDRetriever.getAndIncrement();
         readyForSubscaleFuture.thenRun(() -> upstreamExecutions.forEach(
-                execution -> execution.triggerSubscale(newPartitioning,subscaleID)
+                execution -> execution.triggerSubscale(info,subscaleID)
         ));
     }
 
     public void finishSubscales() {
-        LOG.info("Finishing subscales in Operator {}.", operatorName);
+        LOG.info("Finishing subscales.");
         readyForSubscaleFuture.thenRun(() -> {
             upstreamExecutions.get(0).finishSubscale();
         });
@@ -112,14 +109,8 @@ public class SubscaleHandler {
 
         scaleCompleteAcknowledgement[subtaskIndex] = true;
         if (Arrays.stream(scaleCompleteAcknowledgement).allMatch(Boolean::booleanValue)) {
-            LOG.info("All subtasks have acknowledged subscale completion in Operator {}.", operatorName);
+            LOG.info("All subtasks have acknowledged subscale completion.");
             scaleCompleteFuture.complete(null);
         }
-    }
-
-    public void trackSubscaleComplete(int subtaskIndex, Set<Integer> completedKeyGroups) {
-        LOG.info("Receiving subscale completion notification for {} from subtask {}.",
-                completedKeyGroups, subtaskIndex);
-        migratingKeyGroups.removeAll(completedKeyGroups);
     }
 }

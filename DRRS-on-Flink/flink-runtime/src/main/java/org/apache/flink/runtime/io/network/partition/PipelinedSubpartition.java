@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.partition;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.runtime.checkpoint.CheckpointException;
@@ -52,6 +53,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Stack;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 import static java.util.Objects.requireNonNull;
@@ -838,12 +840,14 @@ public class PipelinedSubpartition extends ResultSubpartition
 
     /** semi-priority buffer will be processed prior to normal buffer only in output */
     @Override
-    public RepartitionBuffersWithPartialRecord addConfirmBarrierAsSemiPriority(BufferConsumer bufferConsumer) {
+    public void addConfirmBarrierAsSemiPriority(
+            BufferConsumer bufferConsumer,
+            Consumer<RepartitionBuffersWithPartialRecord> repartitionConsumer){
         checkNotNull(bufferConsumer);
 
         final boolean notifyDataAvailable;
 
-        RepartitionBuffersWithPartialRecord result = RepartitionBuffersWithPartialRecord.EMPTY;
+        RepartitionBuffersWithPartialRecord result = null;
         synchronized (buffers) {
             if (isFinished || isReleased) {
                 bufferConsumer.close();
@@ -854,9 +858,9 @@ public class PipelinedSubpartition extends ResultSubpartition
             }
 
             final Predicate<BufferConsumerWithPartialRecordLength> isNonAllPartialBuffer =
-                    bcwp -> bcwp.getBufferConsumer().isBuffer() && bcwp.getPartialRecordLength() < bcwp.getBufferConsumer().getSize();
+                    bcwp -> bcwp.getBufferConsumer().isStartOfDataBuffer() && bcwp.getPartialRecordLength() < bcwp.getBufferConsumer().getSize();
             final Predicate<BufferConsumerWithPartialRecordLength> isBuffer =
-                    bcwp -> bcwp.getBufferConsumer().isBuffer();
+                    bcwp -> bcwp.getBufferConsumer().isStartOfDataBuffer();
             // number of non-priority buffers
             int nonPriorityBufferCount = buffers.countNonPriorityWithCondition(isBuffer);
             int nonPriorityBufferCountWithAllPartialRecord = buffers.countNonPriorityWithCondition(isNonAllPartialBuffer);
@@ -897,12 +901,6 @@ public class PipelinedSubpartition extends ResultSubpartition
                 }
 
                 result = new RepartitionBuffersWithPartialRecord(reDistributeStack, remainingPartialRecord);
-
-                LOG.info("After re-distribute, nonP/nonPWithAllPartial/total: {}/{}/{}, with buffersInBacklog: {}",
-                        buffers.countNonPriorityWithCondition(isBuffer),
-                        buffers.countNonPriorityWithCondition(isNonAllPartialBuffer),
-                        buffers.size(),
-                        buffersInBacklog);
             }
 
 
@@ -917,7 +915,9 @@ public class PipelinedSubpartition extends ResultSubpartition
             notifyDataAvailable();
         }
 
-        return result;
+        if (result != null){
+            repartitionConsumer.accept(result);
+        }
     }
 
 
@@ -927,6 +927,7 @@ public class PipelinedSubpartition extends ResultSubpartition
         int partialRecordLength = firstBuffer.getPartialRecordLength();
 
         Buffer buffer = bufferConsumer.build();
+        LOG.info("Trimming the first buffer {} bytes, with partial record length {} ", buffer.getSize(), partialRecordLength);
         // release related resources to avoid memory leak
         checkState(bufferConsumer.isFinished(), "The first buffer must be finished");
 
@@ -952,6 +953,7 @@ public class PipelinedSubpartition extends ResultSubpartition
         // return the remaining last partial record as MemorySegment
         return  partialRecordSegment;
     }
+
 
 
 

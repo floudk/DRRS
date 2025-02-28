@@ -31,6 +31,8 @@ public class Query8 {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.disableOperatorChaining();
 
+        env.setMaxParallelism(cli.maxKeyNum);
+
         DataStream<Person> personStream = env.fromSource(
                         KafkaSource
                                 .<NexmarkEvent>builder()

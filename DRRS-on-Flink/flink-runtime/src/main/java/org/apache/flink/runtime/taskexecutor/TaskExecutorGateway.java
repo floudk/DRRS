@@ -43,13 +43,17 @@ import org.apache.flink.runtime.rest.messages.LogInfo;
 import org.apache.flink.runtime.rest.messages.ThreadDumpInfo;
 import org.apache.flink.runtime.rpc.RpcGateway;
 import org.apache.flink.runtime.rpc.RpcTimeout;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.taskmanager.Task;
 import org.apache.flink.types.SerializableOptional;
 import org.apache.flink.util.SerializedValue;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -335,7 +339,17 @@ public interface TaskExecutorGateway
      * This function is invoked in the upstream tasks of the scaled operator
      */
     default CompletableFuture<Acknowledge> triggerSubscale(
-            ExecutionAttemptID attemptId, Map<Integer,Integer> involvedKeyGroups, int subscaleID, Time rpcTimeout){
+            ExecutionAttemptID attemptId, Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID, Time rpcTimeout){
         return CompletableFuture.completedFuture(Acknowledge.get());
+    }
+
+    default CompletableFuture<Map<Integer, Long>> getStateSize(ExecutionAttemptID attemptId, Time rpcTimeout){
+        return CompletableFuture.completedFuture(Collections.emptyMap());
+    }
+    default CompletableFuture<TargetOperatorMetrics> getScaleMetrics(ExecutionAttemptID attemptId){
+        return CompletableFuture.completedFuture(null);
+    }
+    default CompletableFuture<UpstreamOperatorMetrics> getUpstreamScaleMetrics(ExecutionAttemptID attemptId){
+        return CompletableFuture.completedFuture(null);
     }
 }

@@ -40,14 +40,9 @@ public class RepartitionBuffersWithPartialRecord {
 
     private final SpanningHelper spanningHelper;
 
-    public final static RepartitionBuffersWithPartialRecord EMPTY = new RepartitionBuffersWithPartialRecord();
-
-    private RepartitionBuffersWithPartialRecord(){
-        this(new Stack<>(), null);
-    }
-
     public RepartitionBuffersWithPartialRecord(
-            Stack<BufferConsumerWithPartialRecordLength> buffers, @Nullable MemorySegment partialRecordMemorySegment) {
+            Stack<BufferConsumerWithPartialRecordLength> buffers, 
+            @Nullable MemorySegment partialRecordMemorySegment) {
         this.buffers = buffers;
 
         nonSpanningWrapper = new NonSpanningWrapper();
@@ -67,19 +62,17 @@ public class RepartitionBuffersWithPartialRecord {
 
     @Override
     public String toString() {
-        if (currentBuffer == null){
-            return "RepartitionBuffersWithPartialRecord[no data]";
-        }else{
-            if (spanningHelper.recordLength != -1){
-                return "RepartitionBuffersWithPartialRecord[" + (buffers.size()) + " buffers," +
-                        "{" + (spanningHelper.accumulatedRecordBytes+spanningHelper.leftOverLimit-spanningHelper.leftOverStart) + "/"
-                        + spanningHelper.recordLength + " bytes in spanningHelper}]";
-            }else{
-                return "RepartitionBuffersWithPartialRecord[" + (buffers.size()) + " buffers," +
-                        "{" + spanningHelper.getNumGatheredBytes() + " bytes in spanningHelper}]";
-            }
 
+        if (spanningHelper.recordLength != -1){
+            return "RepartitionBuffersWithPartialRecord[" + (buffers.size()) + " buffers," +
+                    "{" + (spanningHelper.accumulatedRecordBytes+spanningHelper.leftOverLimit-spanningHelper.leftOverStart) + "/"
+                    + spanningHelper.recordLength + " bytes in spanningHelper}]";
+        }else{
+            return "RepartitionBuffersWithPartialRecord[" + (buffers.size()) + " buffers," +
+                    "{" + spanningHelper.getNumGatheredBytes() + " bytes in spanningHelper}]";
         }
+
+
     }
 
 
@@ -90,8 +83,12 @@ public class RepartitionBuffersWithPartialRecord {
             int recordLength = nonSpanningWrapper.readInt();
             if (nonSpanningWrapper.canReadRecord(recordLength)){
                 result =  nonSpanningWrapper.readInto(target);
+                LOG.info("Read {} bytes as a record, remaining bytes in nonSpanningWrapper: {}",
+                        recordLength, nonSpanningWrapper.remaining());
             }else{
                 // current buffer is not enough to read the record
+                LOG.info("Need to read {} bytes, but only {} bytes in nonSpanningWrapper",
+                        recordLength, nonSpanningWrapper.remaining());
                 spanningHelper.transferFromNonSpanningWrapper(nonSpanningWrapper, recordLength);
                 result =  RecordDeserializer.DeserializationResult.PARTIAL_RECORD;
             }
@@ -100,8 +97,11 @@ public class RepartitionBuffersWithPartialRecord {
             nonSpanningWrapper.transferTo(spanningHelper.lengthBuffer);
             result =  RecordDeserializer.DeserializationResult.PARTIAL_RECORD;
         }else if(spanningHelper.hasFullRecord()){
+            int recordLength = spanningHelper.recordLength;
             target.read(spanningHelper.serializationReadBuffer);
             spanningHelper.transferLeftOverTo(nonSpanningWrapper);
+            LOG.info("Read {} bytes as a record(from spanningHelper), remaining bytes in nonSpanningWrapper: {}",
+                    recordLength, nonSpanningWrapper.remaining());
             result =  nonSpanningWrapper.hasRemaining()
                     ? RecordDeserializer.DeserializationResult.INTERMEDIATE_RECORD_FROM_BUFFER
                     : RecordDeserializer.DeserializationResult.LAST_RECORD_FROM_BUFFER;
@@ -131,19 +131,24 @@ public class RepartitionBuffersWithPartialRecord {
         if (buffers.isEmpty()) {
             return false;
         }
-        final BufferConsumer bufferConsumer = buffers.pop().getBufferConsumer();
+
+        final BufferConsumerWithPartialRecordLength bcwp = buffers.pop();
+        LOG.info("Set next buffer with partial record length: {}", bcwp.getPartialRecordLength());
+        final BufferConsumer bufferConsumer = bcwp.getBufferConsumer();
         final Buffer buffer = bufferConsumer.build();
         checkState(bufferConsumer.isFinished(), "BufferConsumer must be finished");
         bufferConsumer.close();
+
         if (currentBuffer != null) {
             currentBuffer.recycleBuffer();
         }
         currentBuffer = buffer;
         checkNotNull(currentBuffer, "Buffer must not be null");
         if (!buffer.isBuffer()) {
-            LOG.warn("BufferConsumer did not create a buffer: {}, {}", buffer.getClass().getName(), buffer.getDataType());
+            LOG.error("BufferConsumer did not create a buffer: {}, {}", buffer.getClass().getName(), buffer.getDataType());
             throw new IllegalStateException("BufferConsumer did not create a buffer");
         }
+
         int offset = buffer.getMemorySegmentOffset();
         int numBytes = buffer.getSize();
         MemorySegment memorySegment = buffer.getMemorySegment();
@@ -180,6 +185,7 @@ public class RepartitionBuffersWithPartialRecord {
             recordLength = nextRecordLength;
             partialRecord = new byte[recordLength];
             accumulatedRecordBytes = partial.copyContentTo(partialRecord);
+            LOG.info("Transfer to spanningWrapper: recordLength {}, accumulatedBytes {}",recordLength,accumulatedRecordBytes);
             partial.clear();
         }
 

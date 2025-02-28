@@ -1,5 +1,7 @@
 package org.apache.flink.streaming.examples.nexmark;
 
+import org.apache.commons.lang3.RandomUtils;
+
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.connector.file.sink.FileSink;
@@ -10,7 +12,6 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
-import org.apache.flink.streaming.api.windowing.assigners.WindowStagger;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.examples.nexmark.NexmarkEvent.*;
@@ -28,13 +29,7 @@ public class Query7 {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.disableOperatorChaining();
 
-        WindowStagger windowStagger = WindowStagger.RANDOM;
-        if (cli.windowStagger.equals("ALIGNED")) {
-            windowStagger = WindowStagger.ALIGNED;
-        }else if (cli.windowStagger.equals("NATURAL")) {
-            windowStagger = WindowStagger.NATURAL;
-        }
-
+        env.setMaxParallelism(cli.maxKeyNum);
 
         DataStream<Bid> bidStream = env.fromSource(
                         KafkaSource
@@ -76,8 +71,9 @@ public class Query7 {
         FileSink<Tuple2<Long,Long>> localFileSink = FileSink
                 .forRowFormat(new Path("file:///opt/output"), new PrintStyleEncoder())
                 .build();
-
-        result.sinkTo(localFileSink).name("FileSink").setParallelism(1).slotSharingGroup("file-sink");
+        final int perPrint = cli.perPrint;
+        result.shuffle().filter(tuple -> RandomUtils.nextInt(0, perPrint) == 0)
+                .sinkTo(localFileSink).name("FileSink").setParallelism(1).slotSharingGroup("file-sink");
         env.execute("Nexmark Query7");
     }
 

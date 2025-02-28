@@ -14,7 +14,6 @@ import org.apache.flink.runtime.scale.io.message.ScaleEvent;
 import org.apache.flink.runtime.scale.io.message.local.StateBuffer;
 import org.apache.flink.runtime.scale.io.message.barrier.ConfirmBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 import org.apache.flink.runtime.scale.util.ThrowingBiConsumer;
 
 import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
@@ -22,6 +21,7 @@ import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
 import org.apache.flink.streaming.api.operators.Input;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.runtime.scale.migrate.strategy.reroute.DisableSubscaleMigrate;
+import org.apache.flink.streaming.runtime.scale.scheduling.IntraSubscaleKeyOrderSelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import org.apache.flink.util.function.RunnableWithException;
@@ -34,7 +34,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
-import static org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode.FLUID_MIGRATE;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public abstract class MigrateStrategy implements AvailabilityProvider {
@@ -55,6 +54,7 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
 
     protected final ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordProcessorInScaling;
 
+
     protected MigrateStrategy(
             StreamOperator mainOperator,
             ScaleCommOutAdapter scaleCommOutAdapter,
@@ -62,7 +62,7 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
             ScalingContext scalingContext,
             int targetChannelCount,
             BiConsumer<RunnableWithException,String> scaleMailConsumer,
-            ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordProcessorInScaling){
+            ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordProcessorInScaling) {
 
         this.mainOperator = checkNotNull(mainOperator);
 
@@ -78,7 +78,9 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
         this.taskName = scalingContext.getTaskName();
         this.subtaskIndex = scalingContext.getSubtaskIndex();
 
+
         scaleCommListener.setConsumers(this::processBuffer, this::processEvent);
+
     }
 
     // ---------------- process incoming records ----------------
@@ -180,7 +182,6 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
             ScaleCommOutAdapter scaleCommOutAdapter,
             ScaleCommListener scaleCommListener,
             ScalingContext scalingContext,
-            MigrateStrategyMode migrateStrategy,
             IndexedInputGate[] inputGates,
             BiConsumer<RunnableWithException,String> mailboxProcessor,
             ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordConsumer){
@@ -224,5 +225,4 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
     public void close(){
 
     }
-
 }

@@ -20,7 +20,6 @@ package org.apache.flink.runtime.scale.coordinator;
 import org.apache.commons.lang3.tuple.Pair;
 
 import org.apache.flink.api.common.TaskInfo;
-import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.io.network.api.writer.ResultPartitionWriter;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
@@ -32,9 +31,12 @@ import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.scale.ScalableTask;
 import org.apache.flink.runtime.scale.ScalingContext;
 import org.apache.flink.runtime.scale.io.ScaleCommOutAdapter;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.ScaleCommManager;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,11 +46,8 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -75,8 +74,7 @@ public class SubtaskScaleCoordinator implements Closeable {
             TaskInfo taskInfo,
             ScaleCommManager scaleCommManager,
             JobVertexID jobVertexID,
-            int subtaskIndex,
-            Consumer<Set<Integer>> subscaleTrackerNotifier) {
+            int subtaskIndex) {
         this.taskName = taskInfo.getTaskNameWithSubtasks();
         this.jobVertexID = jobVertexID;
         this.subtaskIndex = subtaskIndex;
@@ -85,11 +83,8 @@ public class SubtaskScaleCoordinator implements Closeable {
         this.scaleCommManager = scaleCommManager;
         this.scaleCommOutAdapter = new ScaleCommOutAdapter(subtaskIndex, jobVertexID, scaleCommManager);
 
-        this.scalingContext = new ScalingContext(
-                taskInfo,
-                subscaleTrackerNotifier,
-                scaleCommOutAdapter::closeChannels
-        );
+        this.scalingContext = new ScalingContext(taskInfo, scaleCommOutAdapter::closeChannels);
+        this.scaleCommOutAdapter.scalingContext = scalingContext;
     }
 
     public void setInvokable(ScalableTask streamTask){
@@ -100,7 +95,6 @@ public class SubtaskScaleCoordinator implements Closeable {
      * reset the subtask scale coordinator for new scale operation
      */
     public void reset(
-            MigrateStrategyMode migrateStrategyMode,
             int newParallelism,
             List<ConnectionID> connectionIDs,
             Runnable ScaleCompletionAcknowledger) throws IOException {
@@ -109,7 +103,7 @@ public class SubtaskScaleCoordinator implements Closeable {
         this.scaleTerminationCondition = new CompletableFuture<>();
         scalingContext.updateTaskInfo(newParallelism);
         scaleCommOutAdapter.reset(connectionIDs);
-        streamTask.resetScale(migrateStrategyMode);
+        streamTask.resetScale();
         resourceReleaser = new SubtaskScaleResourceReleaser(ScaleCompletionAcknowledger);
         resourceReleaser.registerReleaseCallback(this::release);
     }
@@ -182,7 +176,18 @@ public class SubtaskScaleCoordinator implements Closeable {
     }
 
     // invoked by the upstream operator of the scaled one
-    public void triggerSubscale(Map<Integer,Integer> involvedKeyGroups,int subscaleID) {
+    public void triggerSubscale(Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID) {
         streamTask.triggerSubscale(involvedKeyGroups, subscaleID);
+    }
+
+    public Map<Integer, Long> getStateSize() {
+        return streamTask.getStateSize();
+    }
+
+    public TargetOperatorMetrics getTargetOperatorScaleMetrics() {
+        return streamTask.getTargetOperatorScaleMetrics();
+    }
+    public UpstreamOperatorMetrics getUpstreamScaleMetrics() {
+        return streamTask.getUpstreamScaleMetrics();
     }
 }

@@ -11,12 +11,15 @@ import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
 import org.apache.flink.runtime.rest.messages.TriggerId;
+import org.apache.flink.runtime.scale.ScaleConfig;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
+import org.apache.flink.runtime.scale.rest.ScaleMetricsInfo;
 import org.apache.flink.runtime.scale.schedule.ReConnectionAdapter;
 import org.apache.flink.runtime.scale.schedule.SlotAllocationAdapter;
 import org.apache.flink.runtime.scale.schedule.StateRepartitionAdapter;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 import org.apache.flink.runtime.scheduler.DefaultExecutionDeployer;
 import org.apache.flink.runtime.scheduler.ExecutionSlotAllocator;
 import org.apache.flink.runtime.scheduler.ExecutionVertexVersioner;
@@ -34,9 +37,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.apache.flink.runtime.scale.schedule.subscale.InternalKeyScheduler.AdaptiveHeuristic;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /** This class is responsible for:
@@ -70,6 +75,9 @@ public class ScaleCoordinator{
     private final Map<TriggerId, SubscaleHandler> subscaleHandlers = new HashMap<>();
     private final Map<JobVertexID, TriggerId> vertexIDTriggerID = new HashMap<>();
 
+    Map<Integer, Long> stateSizes = new ConcurrentHashMap<>();
+    CompletableFuture<Void> stateSizeCollectFuture = null;
+
 
     public ScaleCoordinator(ExecutionGraph deg,
                             ExecutionSlotAllocator slotAllocator,
@@ -97,10 +105,12 @@ public class ScaleCoordinator{
         this.executionVertexVersioner = executionVertexVersioner;
     }
 
+
+
+
     // -------------------------- register new scale --------------------------
     public CompletableFuture<Void> triggerScale(
-            TriggerId triggerID, String operatorName, int newParallelism, MigrateStrategyMode strategy) {
-
+            TriggerId triggerID, String operatorName, int newParallelism) {
 
 
         JobVertexID jobVertexID = jobVertexNameToIDMap.get(operatorName);
@@ -120,13 +130,13 @@ public class ScaleCoordinator{
                     new IllegalArgumentException("Invalid scale request"));
         }
 
-        LOG.info("Triggering scale for operator {} from {} to {} with strategy {}",
-                operatorName, oldParallelism, newParallelism, strategy);
+        LOG.info("Triggering scale for operator {} from {} to {}",
+                operatorName, oldParallelism, newParallelism);
 
         CompletableFuture<Void> scaleCompleteFuture = new CompletableFuture<>();
 
         try {
-            ScaleContext context = new ScaleContext(executionJobVertex, newParallelism, strategy);
+            ScaleContext context = new ScaleContext(executionJobVertex, newParallelism);
             expandDeployment(context)
                     .thenRun(()-> triggerScaleInternal(triggerID, context, scaleCompleteFuture));
         }catch (Exception e){
@@ -137,15 +147,75 @@ public class ScaleCoordinator{
         return scaleCompleteFuture;
     }
 
-    public String getScaleStatus(TriggerId triggerId) {
-        if (subscaleHandlers.containsKey(triggerId)) {
-            // LOG.info("Get scale status: {}", subscaleHandlers.get(triggerId).migratingKeyGroups);
-            // subscaleHandlers.migratingKeyGroups to string
-            return subscaleHandlers.get(triggerId).migratingKeyGroups.toString();
-        } else {
-            return "IN_PROGRESS";
+
+
+    public Map<Integer,Long> getStateSize(JobVertexID vertexID) {
+        if (stateSizeCollectFuture == null){
+            CompletableFuture.runAsync(
+                    () -> {
+                        LOG.info("Start collecting state size for jobVertex {}", vertexID);
+                        List<CompletableFuture<Map<Integer, Long>>> stateSizeFutures = new ArrayList<>();
+                        for (ExecutionVertex taskVertex : executionGraph.getJobVertex(vertexID).getTaskVertices()) {
+                            stateSizeFutures.add(taskVertex
+                                    .getCurrentExecutionAttempt()
+                                    .getStateSize());
+                        }
+                        stateSizeCollectFuture = FutureUtils.waitForAll(stateSizeFutures)
+                                .thenAccept((ignored) -> {
+                                    for (CompletableFuture<Map<Integer, Long>> stateSizeFuture : stateSizeFutures) {
+                                        stateSizes.putAll(stateSizeFuture.join());
+                                    }
+                                    LOG.info("Successfully collect state size: {}", stateSizes);
+                                }
+                        );
+                    }
+            );
+            return null;
+        }else if (!stateSizeCollectFuture.isDone()){
+            return null;
+        }else{
+            return stateSizes;
         }
     }
+    public ScaleMetricsInfo getScaleStatus(TriggerId triggerId) {
+        if (subscaleHandlers.containsKey(triggerId)) {
+            return getScaleMetrics(triggerId, subscaleHandlers.get(triggerId).scaleContext);
+        } else {
+            return null;
+        }
+    }
+    private ScaleMetricsInfo getScaleMetrics(TriggerId triggerId, ScaleContext scaleContext) {
+        List<CompletableFuture<TargetOperatorMetrics>> scaleMetricFutures = new ArrayList<>();
+        ExecutionVertex[] taskVertices = scaleContext.getTaskVertices();
+        List<CompletableFuture<UpstreamOperatorMetrics>> upstreamMetricsFutures =null;
+
+        List<ExecutionVertex> upstreamVertices = scaleContext.getUpstreamTaskVertices();
+
+        if (subscaleHandlers.containsKey(triggerId) && scaleContext.resetFuture.isDone()){
+            for (ExecutionVertex taskVertex : taskVertices) {
+                scaleMetricFutures.add(taskVertex.getCurrentExecutionAttempt().getScaleMetrics());
+            }
+        }else{
+            // situation that new execution is initiated but not yet fully deployed
+            for(int i = 0; i < scaleContext.getOldParallelism(); i++){
+                scaleMetricFutures.add(taskVertices[i].getCurrentExecutionAttempt().getScaleMetrics());
+            }
+        }
+        if(ScaleConfig.Instance.ENABLE_SUBSCALE_SCHEDULING){
+            upstreamMetricsFutures = new ArrayList<>();
+            for(ExecutionVertex upstreamVertex : upstreamVertices){
+                upstreamMetricsFutures.add(upstreamVertex.getCurrentExecutionAttempt().getUpstreamScaleMetrics());
+            }
+        }
+
+
+        return ScaleMetricsInfo.of(
+                upstreamMetricsFutures,
+                scaleMetricFutures,
+                scaleContext.getMaxParallelism(),
+                scaleContext.getNewParallelism());
+    }
+
 
     private void triggerScaleInternal(
             TriggerId triggerID,
@@ -153,11 +223,10 @@ public class ScaleCoordinator{
             CompletableFuture<Void> scaleCompleteFuture) {
 
         // CHECK: is it necessary to use the thread from RPC as the main thread of scale coordinator
-        LOG.info("JobVertex {} start scaling({} -> {}) with strategy {} in Thread {}",
+        LOG.info("JobVertex {} start scaling({} -> {}) in Thread {}",
                 scaleContext.getJobVertexName(),
                 scaleContext.getOldParallelism(),
                 scaleContext.getNewParallelism(),
-                scaleContext.getMigrateStrategy(),
                 Thread.currentThread().getName());
 
         // 1. calculate the new key-partition (scale decision)
@@ -168,9 +237,8 @@ public class ScaleCoordinator{
         List<CompletableFuture<Void>> resetFutures = new ArrayList<>();
 
 
-        LOG.info("Creating TaskScaleDescriptor with connectionIDs {}, strategy {} and new parallelism {}",
+        LOG.info("Creating TaskScaleDescriptor with connectionIDs {}, and new parallelism {}",
                 scaleContext.getConnectionIDS(),
-                scaleContext.getMigrateStrategy(),
                 scaleContext.getNewParallelism());
         for (ExecutionVertex taskVertex : taskVertices) {
             LOG.info(
@@ -194,6 +262,7 @@ public class ScaleCoordinator{
             LOG.warn("Replaced existing SubscaleHandler for jobVertex {}",
                     scaleContext.getJobVertexName());
         }
+        LOG.info("Put triggerID {} into subscaleHandlers", triggerID);
         vertexIDTriggerID.put(scaleContext.getJobVertexID(), triggerID);
 
         subscaleHandler.scaleCompleteFuture.whenComplete((ignored, throwable) -> {
@@ -294,7 +363,20 @@ public class ScaleCoordinator{
     public void triggerSubscale(TriggerId triggerID, List<Integer> involvedKeyGroups){
         checkNotNull(subscaleHandlers.get(triggerID),
                 "No SubscaleHandler for triggerID " + triggerID);
-        subscaleHandlers.get(triggerID).trigger(involvedKeyGroups);
+
+        if (ScaleConfig.Instance.SUBSCALE_INTERNAL_KEY_SCHEDULER==AdaptiveHeuristic) {
+            // check state size collected
+            if (stateSizeCollectFuture == null) {
+                getStateSize(subscaleHandlers.get(triggerID).scaleContext.getJobVertexID());
+            }
+            stateSizeCollectFuture.join();
+        }
+
+        Map<Integer,Long> stateSize = new HashMap<>();
+        involvedKeyGroups.forEach(
+                (keyGroup) -> stateSize.put(keyGroup, stateSizes.getOrDefault(keyGroup, -1L))
+        );
+        subscaleHandlers.get(triggerID).trigger(involvedKeyGroups,stateSize);
     }
 
     // no more subscales for this jobVertex to trigger
@@ -340,12 +422,5 @@ public class ScaleCoordinator{
         }
         handler.acknowledgeAllSubscaleComplete(executionAttemptID.getSubtaskIndex());
         return true;
-    }
-
-    public void notifySubscaleComplete(ExecutionAttemptID executionAttemptID, Set<Integer> completedKeyGroups) {
-        final ExecutionVertex vertex = executionGraph.getExecutionVertexOrThrow(executionAttemptID.getExecutionVertexId());
-        final SubscaleHandler handler = subscaleHandlers.get(vertexIDTriggerID.get(vertex.getJobvertexId()));
-        checkNotNull(handler, "No SubscaleHandler for jobVertex " + vertex.getJobvertexId());
-        handler.trackSubscaleComplete(executionAttemptID.getSubtaskIndex(), completedKeyGroups);
     }
 }

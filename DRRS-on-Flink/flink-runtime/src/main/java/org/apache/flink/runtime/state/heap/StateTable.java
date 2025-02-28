@@ -22,8 +22,6 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.core.memory.ByteArrayOutputStreamWithPos;
-import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.runtime.scale.io.message.local.StateBuffer;
 import org.apache.flink.runtime.scale.state.FlexibleKeyGroupRange;
 import org.apache.flink.runtime.state.IterableStateSnapshot;
@@ -43,14 +41,17 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
 
-import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Spliterators;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -396,7 +397,6 @@ public abstract class StateTable<K, N, S>
     }
 
 
-
     // StateEntryIterator
     // ---------------------------------------------------------------------------------------------
 
@@ -503,6 +503,46 @@ public abstract class StateTable<K, N, S>
         LOG.info("Get state buffer : {} and left keyGroupRange: {}", migratingState, keyGroupRangeOnceScaled);
     }
 
+    // this is not thread safe,
+    // but since it only reads the state, it should be fine
+    public Map<Integer, Long> getStateSizes(){
+        final int collectingThreads = 2;
+
+        // Split key groups into subsets
+        List<List<Integer>> keyGroupSubsets = new ArrayList<>(collectingThreads);
+        for (int i = 0; i < collectingThreads; i++) {
+            keyGroupSubsets.add(new ArrayList<>());
+        }
+
+        int i = 0;
+        for (int keyGroup : keyGroupRange) {
+            keyGroupSubsets.get(i % collectingThreads).add(keyGroup);
+            i++;
+        }
+
+        // Create futures for each subset
+        List<CompletableFuture<Map<Integer, Long>>> futures = new ArrayList<>();
+        for (List<Integer> subset : keyGroupSubsets) {
+            CompletableFuture<Map<Integer, Long>> future = CompletableFuture.supplyAsync(() -> {
+                Map<Integer, Long> subsetSizes = new HashMap<>();
+                for (int keyGroup : subset) {
+                    subsetSizes.put(keyGroup, getMapForKeyGroup(keyGroup).getStateSizes());
+                }
+                return subsetSizes;
+            });
+            futures.add(future);
+        }
+
+        // Wait for all futures and combine results
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> futures.stream()
+                        .map(CompletableFuture::join)
+                        .flatMap(map -> map.entrySet().stream())
+                        .collect(Collectors.toMap(
+                                Map.Entry::getKey,
+                                Map.Entry::getValue)))
+                .join();
+    }
 
 
     public void mergeStateTable(Map<Integer, StateMap> managedKeyedStates) {
@@ -552,22 +592,4 @@ public abstract class StateTable<K, N, S>
                 .createForDeserializedState()
                 .orElse(null);
     }
-
-    public int getStateSizeByKeyGroup(int key){
-
-        StateMap<K, N, S> stateMap = getMapForKeyGroup(key);
-        ByteArrayOutputStreamWithPos os = new ByteArrayOutputStreamWithPos();
-        DataOutputViewStreamWrapper dov = new DataOutputViewStreamWrapper(os);
-
-        for (StateEntry<K, N, S> entry : stateMap) {
-            try {
-                metaInfo.getStateSerializer().serialize(entry.getState(), dov);
-            } catch (IOException e) {
-                LOG.error("Failed to serialize state: {}", entry.getState());
-                throw new RuntimeException(e);
-            }
-        }
-        return os.getPosition();
-    }
-
 }

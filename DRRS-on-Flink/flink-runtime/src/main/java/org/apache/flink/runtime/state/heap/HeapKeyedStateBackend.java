@@ -500,6 +500,12 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     // ------------------------------------------------------------------------
 
     @Override
+    public Map<Integer, Long> getStateSizes(){
+        String stateName = registeredKVStates.keySet().iterator().next();
+        return registeredKVStates.get(stateName).getStateSizes();
+    }
+
+    @Override
     public void collectKeyedState(
             List<Integer> keyGroups,
             StateBuffer migratingState) throws IOException {
@@ -556,4 +562,6 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     public void setCurrentKey(K newKey) {
         super.setCurrentKey(newKey);
     }
+
+
 }

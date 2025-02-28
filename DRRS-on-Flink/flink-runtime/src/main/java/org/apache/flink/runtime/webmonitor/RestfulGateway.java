@@ -28,6 +28,7 @@ import org.apache.flink.runtime.checkpoint.CompletedCheckpoint;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.dispatcher.TriggerSavepointMode;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionGraph;
+import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmaster.JobResult;
 import org.apache.flink.runtime.messages.Acknowledge;
@@ -43,13 +44,14 @@ import org.apache.flink.runtime.rest.messages.ThreadDumpInfo;
 import org.apache.flink.runtime.rest.messages.TriggerId;
 import org.apache.flink.runtime.rpc.RpcGateway;
 import org.apache.flink.runtime.rpc.RpcTimeout;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.rest.ScaleMetricsInfo;
 import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
 import org.apache.flink.util.SerializedValue;
 import org.apache.flink.util.concurrent.FutureUtils;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -289,17 +291,23 @@ public interface RestfulGateway extends RpcGateway {
             AsynchronousJobOperationKey operationKey,
             String operatorName,
             int newParallelism,
-            MigrateStrategyMode strategyMode,
             @RpcTimeout Time timeout) {
         throw new UnsupportedOperationException();
     }
 
     default CompletableFuture<Acknowledge> triggerSubscale(
-            AsynchronousJobOperationKey operationKey, List<Integer> keys, @RpcTimeout Time infTimeout){
+            JobID jobId, TriggerId triggerId, List<Integer> keys, @RpcTimeout Time infTimeout){
         throw new UnsupportedOperationException();
     }
 
-    default CompletableFuture<String> getScaleStatus(JobID jobId, TriggerId triggerId){
+    default CompletableFuture<ScaleMetricsInfo> getScaleStatus(JobID jobId, TriggerId triggerId){
         throw new UnsupportedOperationException();
     }
+    default CompletableFuture<Map<Integer, Long>> getStateSize(JobID jobID,JobVertexID vertexID){
+        throw new UnsupportedOperationException();
+    }
+    default CompletableFuture<ScaleMetricsInfo> getScaleMetrics(JobID jobId, TriggerId triggerId){
+        throw new UnsupportedOperationException();
+    }
+
 }

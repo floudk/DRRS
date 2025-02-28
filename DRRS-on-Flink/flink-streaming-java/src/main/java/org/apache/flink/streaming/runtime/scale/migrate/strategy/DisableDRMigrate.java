@@ -3,7 +3,6 @@ package org.apache.flink.streaming.runtime.scale.migrate.strategy;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.runtime.checkpoint.channel.InputChannelInfo;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
-import org.apache.flink.runtime.scale.ScaleConfig;
 import org.apache.flink.runtime.scale.ScalingContext;
 import org.apache.flink.runtime.scale.io.ScaleCommListener;
 import org.apache.flink.runtime.scale.io.ScaleCommOutAdapter;
@@ -18,7 +17,6 @@ import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
 
 import org.apache.flink.streaming.api.operators.Input;
 import org.apache.flink.streaming.api.operators.StreamOperator;
-import org.apache.flink.streaming.runtime.scale.migrate.MigrationBuffer;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.concurrent.FutureUtils;
 import org.apache.flink.util.function.RunnableWithException;
@@ -34,8 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
-
-import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public class DisableDRMigrate extends FluidMigrate{
@@ -109,15 +105,15 @@ public class DisableDRMigrate extends FluidMigrate{
 
     @Override
     public void processEvent(ScaleEvent event, Channel channel){
-        if (event instanceof ScaleEvent.RequestStates) {
+        if (event instanceof ScaleEvent.StateRequestEvent) {
             LOG.info("{}: Received request state transfer event {}.", taskName, event);
-            final ScaleEvent.RequestStates requestStates = (ScaleEvent.RequestStates) event;
-            scaleCommOutAdapter.onRequestedStatesReceived(requestStates.subscaleID, requestStates.eventSenderIndex,channel);
+            final ScaleEvent.StateRequestEvent stateRequestEvent = (ScaleEvent.StateRequestEvent) event;
+            scaleCommOutAdapter.onRequestedStatesReceived(stateRequestEvent.subscaleID, stateRequestEvent.eventSenderIndex,channel);
             // start migrating states
-            migrateStatesAsync(requestStates.eventSenderIndex, requestStates.requestedStates,requestStates.subscaleID);
+            migrateStatesAsync(stateRequestEvent);
         }else if (event instanceof ScaleEvent.AcknowledgeStates) {
             // notify the state has been transmitted
-            final int keyGroupIndex = ((ScaleEvent.AcknowledgeStates) event).keyGroupIndex;
+            final int keyGroupIndex = ((ScaleEvent.AcknowledgeStates) event).ackedKeyGroup;
             LOG.info("{}: Received acknowledge state transfer event {}.", taskName, keyGroupIndex);
             scaleMailConsumer.accept(
                     () -> {
@@ -126,9 +122,9 @@ public class DisableDRMigrate extends FluidMigrate{
                         },
                     "Notify state transmitted"
             );
-            CompletableFuture<Void> transmitComplete = stateTransmitCompletes.remove(keyGroupIndex);
+            CompletableFuture<Integer> transmitComplete = stateTransmitCompletes.remove(keyGroupIndex);
             checkNotNull(transmitComplete, "KeyGroupIndex " + keyGroupIndex + " is not found.");
-            transmitComplete.complete(null);
+            transmitComplete.complete(-1);
         }else{
             throw new IllegalArgumentException("Unknown event type: " + event);
         }
@@ -162,12 +158,12 @@ public class DisableDRMigrate extends FluidMigrate{
     }
 
     @Override
-    protected void migrateStatesAsync(int targetTaskIndex,List<Integer> requestedStates,int subscaleID){
-        List<CompletableFuture<Void>> neededAlignmentFutures = requestedStates.stream()
+    protected void migrateStatesAsync(ScaleEvent.StateRequestEvent request){
+        List<CompletableFuture<Void>> neededAlignmentFutures = request.requestedStates.stream()
                 .map(key -> alignmentFutures.computeIfAbsent(key, k -> new CompletableFuture<>()))
                 .collect(Collectors.toList());
         FutureUtils.waitForAll(neededAlignmentFutures)
-                .thenRunAsync(()->super.migrateStatesAsync(targetTaskIndex,requestedStates,subscaleID));
+                .thenRunAsync(()->super.migrateStatesAsync(request));
     }
 
     @Override
@@ -182,7 +178,10 @@ public class DisableDRMigrate extends FluidMigrate{
                                 taskName,
                                 keyGroupIndex,
                                 fromTaskIndex);
-                        scaleCommOutAdapter.ackStateReceived(fromTaskIndex, keyGroupIndex, scalingContext.getSubscaleID(keyGroupIndex));
+                        scaleCommOutAdapter.ackStateReceived(
+                                fromTaskIndex,
+                                keyGroupIndex,
+                                scalingContext.getSubscaleID(keyGroupIndex),-1);
                     });
             mergeState(stateBuffer, fromTaskIndex);
         } else{
@@ -204,7 +203,6 @@ public class DisableDRMigrate extends FluidMigrate{
 
                     if (migrationBuffer.notifyStateMergedWithDisabledDR(
                             stateBuffer.outgoingManagedKeyedState.keySet(),
-                            recordProcessorInScaling,
                             scalingContext,
                             fromTaskIndex)){
                         LOG.info("{} merge state completed and some cached records are processed, "

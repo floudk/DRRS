@@ -35,6 +35,10 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
 
     private final TreeMap<Integer,KeyGroupRange> keyGroupRanges;
 
+    // in very most cases, keyGroupRanges is only accessed by main thread
+    // Lock is rarely used when collecting metrics is needed during scaling
+    private final Object lock = new Object();
+
     FlexibleKeyGroupRange(TreeMap<Integer, KeyGroupRange> keyGroupRanges) {
         this.keyGroupRanges = keyGroupRanges;
     }
@@ -145,7 +149,19 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
     }
 
     public void clear() {
-        this.keyGroupRanges.clear();
+        synchronized (lock) {
+            this.keyGroupRanges.clear();
+        }
+    }
+    private void putRange(KeyGroupRange keyGroupRange) {
+        synchronized (lock) {
+            keyGroupRanges.put(keyGroupRange.getStartKeyGroup(), keyGroupRange);
+        }
+    }
+    private void removeRange(int startKeyGroup) {
+        synchronized (lock) {
+            keyGroupRanges.remove(startKeyGroup);
+        }
     }
 
     // -------------------------------------- utils ----------------------------------------
@@ -305,13 +321,15 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
 
     // remove the key group range from current key group range
     public void remove(FlexibleKeyGroupRange tobeRemoved) {
-        if (tobeRemoved.equals(this)) {
-            this.keyGroupRanges.clear();
-            return;
-        }
         if (tobeRemoved.equals(EMPTY_KEY_GROUP_RANGE)) {
             return;
         }
+
+        if (tobeRemoved.equals(this)) {
+            this.clear();
+            return;
+        }
+
 
         checkState( this.containsSubRange(tobeRemoved),
                 "The key group range to be removed is not in the key group range");
@@ -345,13 +363,15 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
                 tobeRemovedRange = tobeRemovedIterator.hasNext() ? tobeRemovedIterator.next() : null;
             }
         }
-        this.keyGroupRanges.clear();
-        this.keyGroupRanges.putAll(newKeyGroupRanges);
+        synchronized (lock) {
+            this.keyGroupRanges.clear();
+            this.keyGroupRanges.putAll(newKeyGroupRanges);
+        }
     }
 
     private void add(int keyGroupIndex){
         if (keyGroupRanges.isEmpty()) {
-            keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, keyGroupIndex));
+            putRange(new KeyGroupRange(keyGroupIndex, keyGroupIndex));
             return;
         }
 
@@ -363,28 +383,26 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
        if (floorRange == null) {
              if (keyGroupRanges.firstKey() == keyGroupIndex + 1){
                  KeyGroupRange firstRange = keyGroupRanges.pollFirstEntry().getValue();
-                 keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, firstRange.getEndKeyGroup()));
+                    putRange(new KeyGroupRange(keyGroupIndex, firstRange.getEndKeyGroup()));
             }else{
-                keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, keyGroupIndex));
+                 putRange(new KeyGroupRange(keyGroupIndex, keyGroupIndex));
             }
         } else if(higherRange == null){
             if (floorRange.getEndKeyGroup() == keyGroupIndex - 1) {
-                keyGroupRanges.put(
-                        floorRange.getStartKeyGroup(),
-                        new KeyGroupRange(floorRange.getStartKeyGroup(), keyGroupIndex));
+                putRange(new KeyGroupRange(floorRange.getStartKeyGroup(), keyGroupIndex));
             }else{
-                keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, keyGroupIndex));
+                putRange(new KeyGroupRange(keyGroupIndex, keyGroupIndex));
             }
         } else if (floorRange.getEndKeyGroup() == keyGroupIndex - 1 && higherRange.getStartKeyGroup() == keyGroupIndex + 1){
-            keyGroupRanges.remove(higherRange.getStartKeyGroup());
-            keyGroupRanges.put(floorRange.getStartKeyGroup(), new KeyGroupRange(floorRange.getStartKeyGroup(), higherRange.getEndKeyGroup()));
+           removeRange(higherRange.getStartKeyGroup());
+           putRange(new KeyGroupRange(floorRange.getStartKeyGroup(), higherRange.getEndKeyGroup()));
         } else if(floorRange.getEndKeyGroup() == keyGroupIndex - 1){
-            keyGroupRanges.put(floorRange.getStartKeyGroup(), new KeyGroupRange(floorRange.getStartKeyGroup(), keyGroupIndex));
+            putRange(new KeyGroupRange(floorRange.getStartKeyGroup(), keyGroupIndex));
         } else if (higherRange.getStartKeyGroup() == keyGroupIndex + 1){
-            keyGroupRanges.remove(higherRange.getStartKeyGroup());
-            keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, higherRange.getEndKeyGroup()));
+            removeRange(higherRange.getStartKeyGroup());
+           putRange(new KeyGroupRange(keyGroupIndex, higherRange.getEndKeyGroup()));
         } else {
-            keyGroupRanges.put(keyGroupIndex, new KeyGroupRange(keyGroupIndex, keyGroupIndex));
+            putRange(new KeyGroupRange(keyGroupIndex, keyGroupIndex));
         }
     }
 
@@ -417,4 +435,18 @@ public class FlexibleKeyGroupRange extends KeyGroupRange {
         return res;
     }
 
+    public List<Integer> toList(){
+        List<KeyGroupRange> ranges;
+        // avoid concurrent modification exception
+        synchronized (lock) {
+            ranges = new ArrayList<>(keyGroupRanges.values());
+        }
+        List<Integer> res = new ArrayList<>();
+        for (KeyGroupRange range : ranges) {
+            for (int i = range.getStartKeyGroup(); i <= range.getEndKeyGroup(); i++) {
+                res.add(i);
+            }
+        }
+        return res;
+    }
 }

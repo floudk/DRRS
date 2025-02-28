@@ -19,20 +19,14 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class SubscaleTracker {
     static final Logger LOG = LoggerFactory.getLogger(SubscaleTracker.class);
 
-    Map<TrackerID, Set<Integer>> cachedUnmodifiedSubscales = new HashMap<>();
-
     Map<TrackerID, Set<Integer>> transferInTracker = new HashMap<>();
     Map<TrackerID, Set<Integer>> migratedInTracker = new HashMap<>();
-
     Map<Integer, Set<TrackerID>> subscaleToTrackers = new HashMap<>();
-
-    final Consumer<Set<Integer>> inGroupTrackerNotifier;
     final Consumer<Integer> channelCloseNotifier;
+    public volatile int stillMigratingTrackingProgress = 0;
 
     public SubscaleTracker(
-            Consumer<Set<Integer>> inGroupTrackerNotifier,
             Consumer<Integer> channelCloseNotifier) {
-        this.inGroupTrackerNotifier = inGroupTrackerNotifier;
         this.channelCloseNotifier = channelCloseNotifier;
     }
 
@@ -42,8 +36,8 @@ public class SubscaleTracker {
             List<Integer> keyGroups = entry.getValue();
             transferInTracker.put(new TrackerID(subscaleID, sourceTaskIndex), new HashSet<>(keyGroups));
             migratedInTracker.put(new TrackerID(subscaleID, sourceTaskIndex), new HashSet<>(keyGroups));
-            cachedUnmodifiedSubscales.put(new TrackerID(subscaleID, sourceTaskIndex), new HashSet<>(keyGroups));
             subscaleToTrackers.computeIfAbsent(subscaleID, k -> new HashSet<>()).add(new TrackerID(subscaleID, sourceTaskIndex));
+            stillMigratingTrackingProgress ++;
         }
     }
 
@@ -55,14 +49,12 @@ public class SubscaleTracker {
         inGroup.remove(keyGroup);
         if (inGroup.isEmpty()){
             transferInTracker.remove(trackerID);
-            //LOG.info("InGroup completed: {}", subscaleID);
-            Set<Integer> cachedInGroup = cachedUnmodifiedSubscales.remove(trackerID);
-            CompletableFuture.runAsync(() -> inGroupTrackerNotifier.accept(cachedInGroup));
+            stillMigratingTrackingProgress--;
         }
     }
 
     public void notifyMigratedIn(int keyGroup, int subscaleID, int sourceTaskIndex) {
-        LOG.info("Notify state {} migrated in with subscaleID {}", keyGroup, subscaleID);
+        //LOG.info("Notify state {} migrated in with subscaleID {}", keyGroup, subscaleID);
         TrackerID trackerID = new TrackerID(subscaleID, sourceTaskIndex);
         Set<Integer> inGroup = migratedInTracker.get(trackerID);
         checkNotNull(inGroup, "TrackerID %s-%s not found", subscaleID, sourceTaskIndex);
@@ -83,10 +75,7 @@ public class SubscaleTracker {
 
 
 
-
-
-
-    static class TrackerID{
+    public static class TrackerID{
         public int subscaleID;
         public int sourceTaskIndex;
         public TrackerID(int subscaleID, int sourceTaskIndex) {

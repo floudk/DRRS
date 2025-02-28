@@ -26,6 +26,8 @@ import org.apache.flink.streaming.runtime.scale.migrate.MigrationBuffer;
 import org.apache.flink.streaming.runtime.scale.migrate.strategy.reroute.LocalRerouteCache;
 import org.apache.flink.streaming.runtime.scale.migrate.strategy.reroute.RemoteRerouteCache;
 import org.apache.flink.streaming.runtime.scale.migrate.strategy.reroute.RerouteManager;
+import org.apache.flink.streaming.runtime.scale.scheduling.IntraSubscaleKeyOrderSelector;
+import org.apache.flink.streaming.runtime.scale.scheduling.NextKeyWrapper;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.function.RunnableWithException;
 
@@ -56,7 +58,7 @@ public class FluidMigrate extends MigrateStrategy {
     protected final MigrationBuffer migrationBuffer;
 
     private final Map<Integer, RerouteManager>  rerouteManagers = new ConcurrentHashMap<>();
-    protected final Map<Integer, CompletableFuture<Void>> stateTransmitCompletes = new ConcurrentHashMap<>();
+    protected final Map<Integer, CompletableFuture<Integer>> stateTransmitCompletes = new ConcurrentHashMap<>();
 
     protected final Set<TriggerBarrier> pendingTriggerBarriers = new HashSet<>();
     protected final Map<ConfirmBarrier, Integer> reroutedConfirmBarriers = new HashMap<>();
@@ -64,7 +66,7 @@ public class FluidMigrate extends MigrateStrategy {
     private final ConcurrentHashMap<RerouteID, RerouteProcessingTracker>
             rerouteProcessingTrackers = new ConcurrentHashMap<>();
 
-
+    private final IntraSubscaleKeyOrderSelector intraSubscaleKeyOrderSelector;
     public FluidMigrate(
             StreamOperator mainOperator,
             ScaleCommOutAdapter scaleCommOutAdapter,
@@ -82,9 +84,10 @@ public class FluidMigrate extends MigrateStrategy {
                 poisonMailbox,
                 recordProcessorInScaling);
 
-        this.migrationBuffer = new MigrationBuffer(inputGates);
+        this.migrationBuffer = new MigrationBuffer(inputGates,recordProcessorInScaling);
 
         availabilityHelper.resetAvailable(); // reset the availability in the beginning
+        this.intraSubscaleKeyOrderSelector = new IntraSubscaleKeyOrderSelector(scalingContext,migrationBuffer);
     }
 
     @Override
@@ -103,6 +106,11 @@ public class FluidMigrate extends MigrateStrategy {
         scalingContext.subscale(sourceTaskWithInKeys, targetTaskWithOutKeys, tb.subscaleID);
 
         migrationBuffer.subscale(sourceTaskWithInKeys);
+
+        intraSubscaleKeyOrderSelector.registerSelectorForSubscale(
+                tb.subscaleID,
+                sourceTaskWithInKeys,
+                tb.involvedKeys);
 
         // async request state migration in
         requestStatesAsync(sourceTaskWithInKeys,tb.subscaleID);
@@ -160,7 +168,8 @@ public class FluidMigrate extends MigrateStrategy {
                     scaleCommOutAdapter.requestStatesWithCreatingChannel(
                             sourceSubtask,
                             inKeys,
-                            subscaleID);
+                            subscaleID,
+                            intraSubscaleKeyOrderSelector.next(subscaleID, sourceSubtask));
                 } catch (Exception e) {
                     LOG.error("Failed to send request state event to subtask {}.", sourceSubtask, e);
                     throw new RuntimeException(e);
@@ -171,15 +180,16 @@ public class FluidMigrate extends MigrateStrategy {
 
     @Override
     public void processEvent(ScaleEvent event, Channel channel){
-        if (event instanceof ScaleEvent.RequestStates) {
+        if (event instanceof ScaleEvent.StateRequestEvent) {
             LOG.info("{}: Received request state transfer event {}.", taskName, event);
-            final ScaleEvent.RequestStates requestStates = (ScaleEvent.RequestStates) event;
-            scaleCommOutAdapter.onRequestedStatesReceived(requestStates.subscaleID, requestStates.eventSenderIndex,channel);
+            final ScaleEvent.StateRequestEvent stateRequestEvent = (ScaleEvent.StateRequestEvent) event;
+            scaleCommOutAdapter.onRequestedStatesReceived(stateRequestEvent.subscaleID, stateRequestEvent.eventSenderIndex,channel);
             // start migrating states
-            migrateStatesAsync(requestStates.eventSenderIndex, requestStates.requestedStates,requestStates.subscaleID);
+            migrateStatesAsync(stateRequestEvent);
         }else if (event instanceof ScaleEvent.AcknowledgeStates) {
+            ScaleEvent.AcknowledgeStates acknowledgeStates = (ScaleEvent.AcknowledgeStates) event;
             // notify the state has been transmitted
-            final int keyGroupIndex = ((ScaleEvent.AcknowledgeStates) event).keyGroupIndex;
+            final int keyGroupIndex = acknowledgeStates.ackedKeyGroup;
             LOG.info("{}: Received acknowledge state transfer event {}.", taskName, keyGroupIndex);
             scaleMailConsumer.accept(
                     () -> {
@@ -187,9 +197,9 @@ public class FluidMigrate extends MigrateStrategy {
                     },
                     "Notify state transmitted"
             );
-            CompletableFuture<Void> transmitComplete = stateTransmitCompletes.remove(keyGroupIndex);
+            CompletableFuture<Integer> transmitComplete = stateTransmitCompletes.remove(keyGroupIndex);
             checkNotNull(transmitComplete, "KeyGroupIndex " + keyGroupIndex + " is not found.");
-            transmitComplete.complete(null);
+            transmitComplete.complete(acknowledgeStates.specifiedNextKeyGroup);
         }else{
             throw new IllegalArgumentException("Unknown event type: " + event);
         }
@@ -203,11 +213,19 @@ public class FluidMigrate extends MigrateStrategy {
             int keyGroupIndex = (int) stateBuffer.outgoingManagedKeyedState.keySet().iterator().next();
             CompletableFuture.runAsync(
                     () -> {
-                        LOG.info("{}: Sending acknowledge {} to subtask {}.",
-                                taskName,
+                        int next = -1;
+                        try{
+                            next = intraSubscaleKeyOrderSelector.next(
+                                    scalingContext.getSubscaleID(keyGroupIndex),
+                                    fromTaskIndex);
+                        }catch (Exception e){
+                            LOG.error("Failed to send state transfer event to subtask {}.", taskName, e);
+                        }
+                        scaleCommOutAdapter.ackStateReceived(
+                                fromTaskIndex,
                                 keyGroupIndex,
-                                fromTaskIndex);
-                        scaleCommOutAdapter.ackStateReceived(fromTaskIndex, keyGroupIndex, scalingContext.getSubscaleID(keyGroupIndex));
+                                scalingContext.getSubscaleID(keyGroupIndex),
+                                next);
                     });
             mergeState(stateBuffer, fromTaskIndex);
         }else if(buffer instanceof ScaleBuffer.RecordBuffer){
@@ -274,7 +292,6 @@ public class FluidMigrate extends MigrateStrategy {
                             recordBuffer.inputChannelInfo,
                             confirmedKeys,
                             scalingContext,
-                            recordProcessorInScaling,
                             fromTaskIndex)){
                         LOG.info("{}: remote confirm barrier received, reset availability", taskName);
                         CompletableFuture toNotify = availabilityHelper.getUnavailableToResetAvailable();
@@ -324,32 +341,33 @@ public class FluidMigrate extends MigrateStrategy {
         return confirmedKeys;
     }
 
-    protected void migrateStatesAsync(int targetTaskIndex,List<Integer> requestedStates,int subscaleID){
+    protected void migrateStatesAsync(ScaleEvent.StateRequestEvent request){
+        int subscaleID = request.subscaleID;
+
         CompletableFuture.runAsync(() -> {
             // create if not exist
             rerouteManagers.computeIfAbsent(
                     subscaleID,
                     (k) -> new RerouteManager(scalingContext, scaleCommOutAdapter, subscaleID));
+            NextKeyWrapper nextKeyWrapper = new NextKeyWrapper(request.requestedStates);
+            int nextExpectedKey = request.expectedNextKeyGroup;
 
-            requestedStates.forEach(
-                    (keygroup)->{
-                        try {
-                            CompletableFuture<Void> transmitComplete = new CompletableFuture<>();
-                            stateTransmitCompletes.put(keygroup, transmitComplete);
-                            final List<Integer> keygroups = List.of(keygroup);
-                            CompletableFuture<Void> adapterConsumeFuture = new CompletableFuture<>();
-                            collectAndMigrateStates(
-                                    targetTaskIndex, keygroups, adapterConsumeFuture, subscaleID);
-                            rerouteManagers.get(subscaleID).setStateConsumeFuture(keygroup, adapterConsumeFuture);
-                            // wait for the state to be transmitted
-                            transmitComplete.join();
-                        } catch (Exception e) {
-                            LOG.error("Failed to migrate state for keygroup {}.", keygroup, e);
-                            throw new RuntimeException(e);
-                        }
-                    }
-            );
-            // close rerouteManagerAfterAligned
+            while(nextKeyWrapper.hasNext()){
+                int next = nextKeyWrapper.getNext(nextExpectedKey);
+                try {
+                    CompletableFuture<Integer> transmitComplete = new CompletableFuture<>();
+                    stateTransmitCompletes.put(next, transmitComplete);
+                    CompletableFuture<Void> adapterConsumeFuture = new CompletableFuture<>();
+                    collectAndMigrateStates(
+                            request.eventSenderIndex, List.of(next), adapterConsumeFuture, subscaleID);
+                    rerouteManagers.get(subscaleID).setStateConsumeFuture(next, adapterConsumeFuture);
+                    // wait for the state to be transmitted
+                    nextExpectedKey = transmitComplete.join();
+                } catch (Exception e) {
+                    LOG.error("Failed to migrate state for keygroup {}.", next, e);
+                    throw new RuntimeException(e);
+                }
+            }
         });
     }
 
@@ -365,8 +383,7 @@ public class FluidMigrate extends MigrateStrategy {
                     mainOperator.mergeState(stateBuffer);
                     scalingContext.removeFromInPendingKeys(stateBuffer.outgoingManagedKeyedState.keySet(),fromTaskIndex);
 
-                    if (migrationBuffer.notifyStateMerged(
-                            stateBuffer.outgoingManagedKeyedState.keySet(),recordProcessorInScaling)){
+                    if (migrationBuffer.notifyStateMerged(stateBuffer.outgoingManagedKeyedState.keySet())){
                         LOG.info("{} merge state completed and some cached records are processed, "
                                         + "reset availability",
                                 taskName);
@@ -449,12 +466,14 @@ public class FluidMigrate extends MigrateStrategy {
     public void onCompleteBarrier(SubtaskScaleResourceReleaser releaser) {
         LOG.info("{}: Received complete barrier, no more subsequent subscales will be triggered.", taskName);
         releaser.registerReleaseCallback(this::close);
-        scalingContext.registerCompleteNotifier(releaser::notifyComplete);
+        scalingContext.registerCompleteNotifier(releaser::notifyComplete,scaleMailConsumer);
     }
 
     @Override
     public void close() {
-
+        super.close();
+        intraSubscaleKeyOrderSelector.close();
+        migrationBuffer.close();
     }
     private static class RerouteProcessingTracker {
         int expectedSequenceNumber;

@@ -2,6 +2,8 @@ package org.apache.flink.runtime.scale;
 
 import org.apache.flink.configuration.ConfigConstants;
 
+import org.apache.flink.runtime.scale.schedule.subscale.InternalKeyScheduler;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +17,8 @@ import java.util.Properties;
  * Constants for the scaling
  */
 public class ScaleConfig {
+
+
     static Logger LOG = LoggerFactory.getLogger(ScaleConfig.class);
 
     static String SCALE_CONFIG_FILE = "scale-conf.properties";
@@ -34,6 +38,14 @@ public class ScaleConfig {
 
     public final boolean ENABLE_DR; // decoupling and reroute
     public final boolean ENABLE_SUBSCALE; // subscale
+
+    // ----------------- Subscale Scheduling -----------------
+    public final boolean ENABLE_SUBSCALE_SCHEDULING;
+    public final double STATE_SAMPLE_RATE;
+    public final InternalKeyScheduler SUBSCALE_INTERNAL_KEY_SCHEDULER;
+    public final double MIGRATION_BUFFER_EMERGENCY_RATIO;
+    public final double FAIRNESS_WEIGHT;
+
 
     public static ScaleConfig Instance = new ScaleConfig();
 
@@ -86,6 +98,18 @@ public class ScaleConfig {
 
             this.ENABLE_SUBSCALE = Boolean.parseBoolean(properties.getProperty("drrs.enable-subscale", "true"));
             LOG.info("Successfully loaded enable-subscale: {}", ENABLE_SUBSCALE);
+
+            this.STATE_SAMPLE_RATE = Double.parseDouble(properties.getProperty("drrs.state-sample-rate", "10"));
+            LOG.info("Successfully loaded state-sample-rate: {}", STATE_SAMPLE_RATE);
+
+            this.SUBSCALE_INTERNAL_KEY_SCHEDULER = InternalKeyScheduler.valueOf(properties.getProperty("drrs.subscale.internal-key-scheduler", "Lexicographic"));
+            this.MIGRATION_BUFFER_EMERGENCY_RATIO = Double.parseDouble(properties.getProperty("drrs.subscale.buffer-emergency-ratio", "0.9"));
+            this.FAIRNESS_WEIGHT = Double.parseDouble(properties.getProperty("drrs.subscale.internal-key-scheduler.adaptive.fairness-weight", "0.5"));
+            this.ENABLE_SUBSCALE_SCHEDULING = Boolean.parseBoolean(properties.getProperty("drrs.enable-subscale-scheduling", "false"));
+            LOG.info("Successfully loaded subscale-reassignment: scheduler: {}, emergency-ratio: {}, fairness-weight: {}, enable-scheduling: {}",
+                    SUBSCALE_INTERNAL_KEY_SCHEDULER, MIGRATION_BUFFER_EMERGENCY_RATIO, FAIRNESS_WEIGHT, ENABLE_SUBSCALE_SCHEDULING);
+
+
 
         } else {
             LOG.error("Configuration file {} does not exist or is not readable", propertiesConfig);

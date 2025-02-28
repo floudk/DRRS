@@ -80,8 +80,11 @@ import org.apache.flink.runtime.operators.coordination.TaskNotRunningException;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.scale.ScalableTask;
 import org.apache.flink.runtime.scale.coordinator.SubtaskScaleCoordinator;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
 import org.apache.flink.runtime.shuffle.ShuffleIOOwnerContext;
 import org.apache.flink.runtime.state.TaskStateManager;
@@ -444,8 +447,7 @@ public class Task
                     taskInfo,
                     ((NettyShuffleEnvironment) shuffleEnvironment).getScaleConsumerManager(),
                     getJobVertexId(),
-                    executionId.getSubtaskIndex(),
-                    (keys) -> taskManagerActions.notifySubscaleComplete(executionAttemptID, keys));
+                    executionId.getSubtaskIndex());
         }else{
             subtaskScaleCoordinator = null;
             LOG.error("Not NettyShuffleEnvironment, scale is not supported in this case");
@@ -1917,14 +1919,26 @@ public class Task
         LOG.info("{} with {} inputGates {}",
                 taskNameWithSubtask, inputGates.length, inputGates);
         subtaskScaleCoordinator.reset(
-                descriptor.getMigrateStrategy(),
                 descriptor.getNewParallelism(),
                 descriptor.getAllConnectionIds(),
-                () -> {taskManagerActions.acknowledgeScaleComplete(executionId);});
+                () -> taskManagerActions.acknowledgeScaleComplete(executionId));
     }
 
-    public void triggerSubscale(Map<Integer,Integer> involvedKeyGroups,int subscaleID) {
+    public void triggerSubscale(Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID) {
         subtaskScaleCoordinator.triggerSubscale(involvedKeyGroups,subscaleID);
     }
+
+    public Map<Integer, Long> getStateSize() {
+        return subtaskScaleCoordinator.getStateSize();
+    }
+
+    public TargetOperatorMetrics getScaleMetrics() {
+        //LOG.info("Get scale metrics for task {}", metric);
+        return subtaskScaleCoordinator.getTargetOperatorScaleMetrics();
+    }
+    public UpstreamOperatorMetrics getUpstreamScaleMetrics() {
+        return subtaskScaleCoordinator.getUpstreamScaleMetrics();
+    }
+
 
 }

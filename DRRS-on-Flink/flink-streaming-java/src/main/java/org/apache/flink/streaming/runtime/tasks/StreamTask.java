@@ -70,9 +70,11 @@ import org.apache.flink.runtime.jobgraph.tasks.TaskInvokable;
 import org.apache.flink.runtime.metrics.groups.TaskIOMetricGroup;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.plugable.SerializationDelegate;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.barrier.ConfirmBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.scale.util.ThrowingBiConsumer;
 import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.CheckpointStorageAccess;
@@ -156,6 +158,7 @@ import java.util.stream.Collectors;
 
 import static org.apache.flink.configuration.TaskManagerOptions.BUFFER_DEBLOAT_PERIOD;
 import static org.apache.flink.util.ExceptionUtils.firstOrSuppressed;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 import static org.apache.flink.util.concurrent.FutureUtils.assertNoException;
 
@@ -1973,14 +1976,45 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
 
     @Override
-    public void resetScale(MigrateStrategyMode migrateStrategyMode) throws IOException {
-        subtaskSubscaleHandler.reset(migrateStrategyMode, environment.getAllInputGates());
+    public void resetScale() throws IOException {
+        subtaskSubscaleHandler.reset(environment.getAllInputGates());
+        if (!scaleMetricTrackerInitialized){
+            subtaskSubscaleHandler.initialScaleMetricTracker();
+            scaleMetricTrackerInitialized = true;
+            LOG.info("Successfully initialized scale metric tracker");
+        }
+    }
+
+    @Override
+    public Map<Integer, Long> getStateSize(){
+        checkNotNull(mainOperator, "mainOperator is not set yet");
+        return mainOperator.getStateSizes();
+    }
+
+    volatile boolean scaleMetricTrackerInitialized = false;
+    @Override
+    public TargetOperatorMetrics getTargetOperatorScaleMetrics(){
+        if (!scaleMetricTrackerInitialized) {
+            subtaskSubscaleHandler.initialScaleMetricTracker();
+            scaleMetricTrackerInitialized = true;
+            LOG.info("Successfully initialized scale metric tracker");
+        }
+
+        return new TargetOperatorMetrics(
+                subtaskSubscaleHandler.getProcessingKeyCounts(),
+                subtaskSubscaleHandler.getScalingContext(),
+                subtaskSubscaleHandler.isAvailable());
+    }
+
+    @Override
+    public UpstreamOperatorMetrics getUpstreamScaleMetrics(){
+        return new UpstreamOperatorMetrics(subtaskSubscaleHandler.getUpstreamMetrics());
     }
 
     // ----------------- 1. Upstream Tasks trigger subscale -------------------
 
     @Override
-    public void triggerSubscale(Map<Integer,Integer> involvedKeyGroups, int subscaleID){
+    public void triggerSubscale(Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID){
         subtaskSubscaleHandler.triggerSubscale(
                 involvedKeyGroups,
                 subscaleID,

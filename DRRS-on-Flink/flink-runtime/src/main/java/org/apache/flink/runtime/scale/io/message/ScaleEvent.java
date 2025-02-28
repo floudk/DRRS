@@ -20,8 +20,8 @@ public abstract class ScaleEvent {
     public static ScaleEvent fromByteBuf(ByteBuf in) {
         byte id = in.readByte();
         switch (id) {
-            case RequestStates.ID:
-                return RequestStates.readFrom(in);
+            case StateRequestEvent.ID:
+                return StateRequestEvent.readFrom(in);
             case AcknowledgeStates.ID:
                 return AcknowledgeStates.readFrom(in);
             default:
@@ -30,16 +30,18 @@ public abstract class ScaleEvent {
     }
 
 
-    public static class RequestStates extends ScaleEvent {
+    public static class StateRequestEvent extends ScaleEvent {
 
         static final byte ID = 0;
         public List<Integer> requestedStates;
         public final int subscaleID;
+        public final int expectedNextKeyGroup;
 
-        public RequestStates(int subtaskIndex, List<Integer> keyGroups, int subscaleID) {
+        public StateRequestEvent(int subtaskIndex, List<Integer> keyGroups, int subscaleID, int expectedNextKeyGroup) {
             super(subtaskIndex);
             this.requestedStates = keyGroups;
             this.subscaleID = subscaleID;
+            this.expectedNextKeyGroup = expectedNextKeyGroup;
         }
 
         /**
@@ -52,7 +54,7 @@ public abstract class ScaleEvent {
          */
         @Override
         public int getSize() {
-            return 1 + 4 + 4 + 4 * requestedStates.size() + 4;
+            return 1 + 4 + 4 + 4 * requestedStates.size() + 4 + 4;
         }
 
         @Override
@@ -64,9 +66,10 @@ public abstract class ScaleEvent {
                 buf.writeInt(keyGroup);
             }
             buf.writeInt(subscaleID);
+            buf.writeInt(expectedNextKeyGroup);
         }
 
-        public static RequestStates readFrom(ByteBuf buf) {
+        public static StateRequestEvent readFrom(ByteBuf buf) {
             int subtaskIndex = buf.readInt();
             int size = buf.readInt();
             List<Integer> keyGroups = new ArrayList<>();
@@ -74,7 +77,7 @@ public abstract class ScaleEvent {
                 keyGroups.add(buf.readInt());
             }
             int subscaleID = buf.readInt();
-            return new RequestStates(subtaskIndex, keyGroups, subscaleID);
+            return new StateRequestEvent(subtaskIndex, keyGroups, subscaleID, buf.readInt());
         }
         @Override
         public String toString() {
@@ -85,11 +88,14 @@ public abstract class ScaleEvent {
     public static class AcknowledgeStates extends ScaleEvent {
 
         static final byte ID = 1;
-        public int keyGroupIndex;
+        public int ackedKeyGroup;
 
-        public AcknowledgeStates(int eventSenderIndex, int keyGroupIndex) {
+        public int specifiedNextKeyGroup;
+
+        public AcknowledgeStates(int eventSenderIndex, int keyGroupIndex, int expectedNext) {
             super(eventSenderIndex);
-            this.keyGroupIndex = keyGroupIndex;
+            this.ackedKeyGroup = keyGroupIndex;
+            this.specifiedNextKeyGroup = expectedNext;
         }
 
         @Override
@@ -97,20 +103,22 @@ public abstract class ScaleEvent {
             // eventSenderIndex: 4 bytes
             // ID: 1 byte
             // stateBufferID: 4 bytes
-            return 1 + 4 + 4;
+            return 1 + 4 + 4 + 4;
         }
 
         @Override
         public void writeTo(ByteBuf buf) {
             buf.writeByte(ID);
             buf.writeInt(eventSenderIndex);
-            buf.writeInt(keyGroupIndex);
+            buf.writeInt(ackedKeyGroup);
+            buf.writeInt(specifiedNextKeyGroup);
         }
 
         public static AcknowledgeStates readFrom(ByteBuf buf) {
             int subtaskIndex = buf.readInt();
-            int stateBufferID = buf.readInt();
-            return new AcknowledgeStates(subtaskIndex, stateBufferID);
+            int ackedKeyGroup = buf.readInt();
+            int specifiedNextKeyGroup = buf.readInt();
+            return new AcknowledgeStates(subtaskIndex, ackedKeyGroup, specifiedNextKeyGroup);
         }
     }
 

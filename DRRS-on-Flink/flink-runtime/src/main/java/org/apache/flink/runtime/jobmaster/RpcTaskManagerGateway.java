@@ -31,8 +31,11 @@ import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorGateway;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.SerializedValue;
@@ -160,9 +163,23 @@ public class RpcTaskManagerGateway implements TaskManagerGateway {
 
     @Override
     public CompletableFuture<Acknowledge> triggerSubscale(
-            ExecutionAttemptID attemptId, Map<Integer,Integer> involvedKeyGroups, int subscaleID, Time rpcTimeout){
+            ExecutionAttemptID attemptId, Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID, Time rpcTimeout){
         return taskExecutorGateway.triggerSubscale(attemptId,involvedKeyGroups,subscaleID,rpcTimeout);
     }
 
+    @Override
+    public CompletableFuture<Map<Integer, Long>> getStateSize(ExecutionAttemptID attemptId, Time rpcTimeout){
+        return taskExecutorGateway.getStateSize(attemptId,rpcTimeout);
+    }
+
+    @Override
+    public CompletableFuture<TargetOperatorMetrics> getScaleMetrics(ExecutionAttemptID attemptId){
+        return taskExecutorGateway.getScaleMetrics(attemptId);
+    }
+
+    @Override
+    public CompletableFuture<UpstreamOperatorMetrics> getUpstreamScaleMetrics(ExecutionAttemptID attemptId){
+        return taskExecutorGateway.getUpstreamScaleMetrics(attemptId);
+    }
 }
 

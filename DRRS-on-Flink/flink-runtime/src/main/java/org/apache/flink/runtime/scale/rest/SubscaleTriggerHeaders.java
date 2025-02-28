@@ -8,7 +8,7 @@ import org.apache.flink.runtime.rest.messages.TriggerIdPathParameter;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.HttpResponseStatus;
 
 public class SubscaleTriggerHeaders extends AsynchronousOperationTriggerMessageHeaders<
-        SubscaleTriggerRequestBody, ScaleTriggerMessageParameters> {
+        SubscaleTriggerRequestBody, ScaleMessageParametersWithTriggerID> {
 
     private static final SubscaleTriggerHeaders INSTANCE = new SubscaleTriggerHeaders();
 
@@ -24,8 +24,8 @@ public class SubscaleTriggerHeaders extends AsynchronousOperationTriggerMessageH
     }
 
     @Override
-    public ScaleTriggerMessageParameters getUnresolvedMessageParameters() {
-        return new ScaleTriggerMessageParameters();
+    public ScaleMessageParametersWithTriggerID getUnresolvedMessageParameters() {
+        return new ScaleMessageParametersWithTriggerID();
     }
 
     @Override

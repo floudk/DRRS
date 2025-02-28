@@ -2,6 +2,7 @@ package org.apache.flink.runtime.scale.io.message.barrier;
 
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.io.network.api.serialization.EventSerializer;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -20,7 +21,7 @@ import java.util.Set;
 public class TriggerBarrier extends ScaleBarrier{
     private static final long serialVersionUID = 1L;
 
-    private final List<Integer> involvedKeys; // key group index involved in current subscale
+    public final Map<Integer, Long> involvedKeys; // key group index involved in current subscale
     // source task index -> [target task index -> key groups]
     private final Map<Integer, Map<Integer, List<Integer>>> outMap;
     // target task index -> [source task index -> key groups]
@@ -28,13 +29,13 @@ public class TriggerBarrier extends ScaleBarrier{
 
     public final int subscaleID;
 
-    public TriggerBarrier(Map<Integer,Integer> newKeyPartition, Map<Integer, Integer> currentKeyPartition, int subscaleID){
+    public TriggerBarrier(Map<Integer, SubscaleTriggerInfo> involvedInfos, Map<Integer, Integer> currentKeyPartition, int subscaleID){
         super();
-        List<Integer> involvedKeys = new ArrayList<>(newKeyPartition.keySet());
+        List<Integer> involvedKeys = new ArrayList<>(involvedInfos.keySet());
         Map<Integer, Tuple2<Integer,Integer>> keyGroupSourceWithTarget = new HashMap<>();
         involvedKeys.forEach(key ->
                 keyGroupSourceWithTarget.put(
-                        key, new Tuple2<>(currentKeyPartition.get(key), newKeyPartition.get(key))));
+                        key, new Tuple2<>(currentKeyPartition.get(key), involvedInfos.get(key).newPartitioningPos)));
 
         Map<Integer, Map<Integer, List<Integer>>> outMap = new HashMap<>();
         Map<Integer, Map<Integer, List<Integer>>> inMap = new HashMap<>();
@@ -49,7 +50,9 @@ public class TriggerBarrier extends ScaleBarrier{
             inMap.get(target).putIfAbsent(source, new ArrayList<>());
             inMap.get(target).get(source).add(key);
         });
-        this.involvedKeys = Collections.unmodifiableList(involvedKeys);
+        this.involvedKeys = new HashMap<>();
+        involvedKeys.forEach(key -> this.involvedKeys.put(key, involvedInfos.get(key).stateSize));
+
         this.outMap = outMap;
         this.inMap = inMap;
         this.subscaleID = subscaleID;

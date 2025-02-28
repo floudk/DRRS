@@ -107,13 +107,6 @@ evaluation/**/test/
 evaluation/**/*.bak*/
 evaluation/**/output/
 
-# executables
-evaluation/simple-test/state-order-simulator/src/simulator
-evaluation/simple-test/check/*.txt
-evaluation/simple-test/simple-evaluation/**/*.txt
-evaluation/simple-test/simple-evaluation/**/*.png
-
-baselines/
 
 evaluation/**/.rebuild
 evaluation/docker/utils/*

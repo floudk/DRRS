@@ -3,14 +3,13 @@ package org.apache.flink.runtime.scale.rest;
 import org.apache.flink.runtime.rest.HttpMethodWrapper;
 import org.apache.flink.runtime.rest.handler.async.AsynchronousOperationStatusMessageHeaders;
 import org.apache.flink.runtime.rest.messages.EmptyRequestBody;
-import org.apache.flink.runtime.rest.messages.EmptyResponseBody;
 import org.apache.flink.runtime.rest.messages.JobIDPathParameter;
 import org.apache.flink.runtime.rest.messages.TriggerIdPathParameter;
 
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.HttpResponseStatus;
 
 public class ScaleStatusHeaders extends AsynchronousOperationStatusMessageHeaders<
-        ScaleStatusInfo, ScaleStatusMessageParameters> {
+        ScaleMetricsInfo, ScaleMessageParametersWithTriggerID> {
 
     private static final ScaleStatusHeaders INSTANCE = new ScaleStatusHeaders();
 
@@ -31,8 +30,8 @@ public class ScaleStatusHeaders extends AsynchronousOperationStatusMessageHeader
     }
 
     @Override
-    public ScaleStatusMessageParameters getUnresolvedMessageParameters() {
-        return new ScaleStatusMessageParameters();
+    public ScaleMessageParametersWithTriggerID getUnresolvedMessageParameters() {
+        return new ScaleMessageParametersWithTriggerID();
     }
 
     @Override
@@ -50,8 +49,8 @@ public class ScaleStatusHeaders extends AsynchronousOperationStatusMessageHeader
     }
 
     @Override
-    public Class<ScaleStatusInfo> getValueClass() {
-        return ScaleStatusInfo.class;
+    public Class<ScaleMetricsInfo> getValueClass() {
+        return ScaleMetricsInfo.class;
     }
 
     @Override

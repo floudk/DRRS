@@ -20,6 +20,7 @@ package org.apache.flink.streaming.runtime.scale;
 import org.apache.flink.api.common.TaskInfo;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.core.security.FlinkSecurityManager;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.runtime.checkpoint.channel.InputChannelInfo;
@@ -39,11 +40,11 @@ import org.apache.flink.runtime.scale.ScalingContext;
 import org.apache.flink.runtime.scale.coordinator.SubtaskScaleCoordinator;
 import org.apache.flink.runtime.scale.coordinator.SubtaskScaleResourceReleaser;
 import org.apache.flink.runtime.scale.io.ScaleCommListener;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.barrier.ConfirmBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.ScaleBarrier;
 import org.apache.flink.runtime.scale.io.message.barrier.TriggerBarrier;
 import org.apache.flink.runtime.scale.io.ScaleCommManager;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
 import org.apache.flink.runtime.scale.state.migrate.RepartitionBuffersWithPartialRecord;
 import org.apache.flink.runtime.scale.util.ThrowingBiConsumer;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
@@ -62,11 +63,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -131,7 +128,6 @@ public class SubtaskSubscaleHandler<OUT> {
         this.scaleCommListener = new ScaleCommListener();
 
         this.scalingContext = subtaskScaleCoordinator.scalingContext;
-
     }
 
     // invoked by #StreamTask.invoke() to initialize the subscale handler
@@ -180,12 +176,9 @@ public class SubtaskSubscaleHandler<OUT> {
      * @param inputSerializer
      * @throws IOException
      */
-    public void reset(
-            MigrateStrategyMode migrateStrategy,
-            IndexedInputGate[] inputGates) throws IOException {
+    public void reset(IndexedInputGate[] inputGates) throws IOException {
         initFuture.join();
         checkNotNull(scalingRecordConsumer, "Scaling record consumer is null");
-        checkNotNull(migrateStrategy, "State migrate selector is null");
         checkNotNull(mainOperator, "Main operator is null");
 
         this.migrateStrategy = MigrateStrategy.createMigrateStrategy(
@@ -193,13 +186,12 @@ public class SubtaskSubscaleHandler<OUT> {
                 subtaskScaleCoordinator.getScaleCommAdapter(),
                 scaleCommListener,
                 subtaskScaleCoordinator.scalingContext,
-                migrateStrategy,
                 inputGates,
                 mailboxProcessor::sendScaleMail,
                 scalingRecordConsumer);
 
         mailboxProcessor.sendScaleMail(
-                () -> scalingContext.triggered(mainOperator.getFlexibleKeyGroupRange()),
+                () -> scalingContext.startScaling(mainOperator.getFlexibleKeyGroupRange()),
                 "Init scaling context"
         );
         scaleCommManager.startConnection();
@@ -207,11 +199,11 @@ public class SubtaskSubscaleHandler<OUT> {
 
     // ---------------------------- 2. trigger subscale in upstream ----------------------------
     public void triggerSubscale(
-            Map<Integer,Integer> newKeyPartition,
+            Map<Integer, SubscaleTriggerInfo> subscaleInfo,
             int subscaleID,
             TypeSerializer outputSerializer) {
 
-        if (newKeyPartition.isEmpty()) {
+        if (subscaleInfo.isEmpty()) {
             finishSubscale(recordWriter);
             return;
         }
@@ -221,25 +213,34 @@ public class SubtaskSubscaleHandler<OUT> {
                     FlinkSecurityManager.monitorUserSystemExitForCurrentThread();
                     runningChecker.run();
                     Set<Integer> affectedSourceSubtasks = new HashSet<>();
-                    final Map<Integer,Integer> currentRoutingTable = getCurrentAndUpdateRoutingTable(newKeyPartition);
-                    LOG.info("{} Send trigger barriers,current {}, new {} in Thread {}",
+                    final Map<Integer,Integer> currentRoutingTable = getCurrentAndUpdateRoutingTable(subscaleInfo);
+                    LOG.info("{} Send trigger barriers,current {}, new {}",
                             taskInfo.getTaskNameWithSubtasks(),
                             currentRoutingTable,
-                            newKeyPartition,
-                            Thread.currentThread().getName());
+                            subscaleInfo);
                     currentRoutingTable.forEach((ig, value) -> affectedSourceSubtasks.add(value));
 
                     TriggerBarrier triggerBarrier =
-                            new TriggerBarrier(newKeyPartition, currentRoutingTable, subscaleID);
+                            new TriggerBarrier(subscaleInfo, currentRoutingTable, subscaleID);
 
-                    ConfirmBarrier confirmBarrier = new ConfirmBarrier(newKeyPartition.keySet(), subscaleID);
+                    ConfirmBarrier confirmBarrier = new ConfirmBarrier(subscaleInfo.keySet(), subscaleID);
 
 
                     if (recordWriter instanceof SingleRecordWriter) {
                         recordWriter.getRecordWriter(0).emitTriggerBarriers(triggerBarrier);
-                        Map<Integer,RepartitionBuffersWithPartialRecord> repartitionBuffers =
-                                recordWriter.getRecordWriter(0).emitConfirmBarriers(confirmBarrier,affectedSourceSubtasks);
-                        // redistributeBuffers(repartitionBuffers, outputSerializer);
+                        recordWriter.getRecordWriter(0).emitConfirmBarriers(
+                                confirmBarrier,
+                                affectedSourceSubtasks,
+                                (rp)-> {
+                                    try {
+                                        checkNotNull(upstreamRecordWriter, "Output serializer is not set yet");
+                                        recoverRecordsFromBuffer((RepartitionBuffersWithPartialRecord) rp, outputSerializer,upstreamRecordWriter);
+                                    } catch (IOException e) {
+                                        LOG.error("Errors in recovering records from buffer", e);
+                                        throw new RuntimeException(e);
+                                    }
+                                }
+                        );
                     }else if(recordWriter instanceof MultipleRecordWriters){
                         // need to find the record writer of scaling partition
                         throw new UnsupportedOperationException(
@@ -292,14 +293,23 @@ public class SubtaskSubscaleHandler<OUT> {
         migrateStrategy.onCompleteBarrier(releaser);
     }
 
-
     public <IN> void processRecordOnScaling(
             StreamRecord<IN> record,
             InputChannelInfo channelInfo,
             int keyGroupIndex,
             Counter numRecordsIn,
             Input<IN> input) throws Exception {
-        migrateStrategy.processRecord(record, channelInfo, keyGroupIndex, numRecordsIn, input);
+        if (channelInfo == null){
+            migrateStrategy.processRecord(record, null, keyGroupIndex, numRecordsIn, input);
+        }else{
+            if (scalingContext.isPreparing()){
+                numRecordsIn.inc();
+                input.setKeyContextElement(record);
+                input.processElement(record);
+            }else{
+                migrateStrategy.processRecord(record, channelInfo, keyGroupIndex, numRecordsIn, input);
+            }
+        }
     }
 
     public void processScaleMarker(ScaleEvaEvent scaleEvaEvent) throws Exception {
@@ -335,29 +345,13 @@ public class SubtaskSubscaleHandler<OUT> {
 
     // clean up necessary resources to wait for the next scale
     public void release(){
-        scaleCommManager.stopConnection();
+        scalingContext.channelCloseFuture.thenRun(
+                scaleCommManager::stopConnection
+        );
     }
 
 
     // -------------------------- Upstream Utils --------------------------
-
-    public void redistributeBuffers(
-            Map<Integer,RepartitionBuffersWithPartialRecord> repartitionBuffers,
-            TypeSerializer typeSerializer) {
-        try{
-            checkNotNull(upstreamRecordWriter, "Record writer in upstream is not set yet");
-            for (Map.Entry<Integer, RepartitionBuffersWithPartialRecord> entry : repartitionBuffers.entrySet()) {
-                RepartitionBuffersWithPartialRecord repartitionBuffer = entry.getValue();
-                recoverRecordsFromBuffer(repartitionBuffer, typeSerializer,upstreamRecordWriter);
-            }
-            LOG.info("{}: redistribute records done in Thread {}",
-                    taskInfo.getTaskNameWithSubtasks(), Thread.currentThread().getName());
-        }catch (Exception e){
-            LOG.warn("Encounter unexpected exception when redistribute buffers", e);
-        }
-    }
-
-
 
     private void recoverRecordsFromBuffer(
             RepartitionBuffersWithPartialRecord repartitionBuffers,
@@ -370,12 +364,14 @@ public class SubtaskSubscaleHandler<OUT> {
         final DeserializationDelegate<StreamElement> deserializationDelegate =
                 new NonReusingDeserializationDelegate<>(
                         new StreamElementSerializer<>(copySerializer));
-        SerializationDelegate<StreamElement> element =
-                tryGetRecord(repartitionBuffers, deserializationDelegate, copySerializer);
-        while(element != null){
-            element = tryGetRecord(repartitionBuffers,deserializationDelegate, copySerializer);
-            if (element != null  && element.getInstance().isRecord()){
+
+        SerializationDelegate<StreamElement> element;
+        while ((element = tryGetRecord(repartitionBuffers, deserializationDelegate, copySerializer)) != null) {
+            if (element.getInstance().isRecord()) {
                 recordWriter.emit(element);
+            } else {
+                LOG.info("Deserialization result is not record, ignore {}",
+                        element.getInstance().getClass().getSimpleName());
             }
         }
     }
@@ -419,7 +415,7 @@ public class SubtaskSubscaleHandler<OUT> {
      * Get routing table from record writer
      * @return partial routing table (only related keys)
      */
-    private Map<Integer,Integer> getCurrentAndUpdateRoutingTable(Map<Integer,Integer> newKeyPartitions){
+    private Map<Integer,Integer> getCurrentAndUpdateRoutingTable(Map<Integer,SubscaleTriggerInfo> newKeyPartitions){
         checkNotNull(upstreamRecordWriter, "Record writer is not set yet");
         if (upstreamRecordWriter instanceof ChannelSelectorRecordWriter){
             return ((ChannelSelectorRecordWriter) upstreamRecordWriter).getAndUpdateRoutingTable(newKeyPartitions);
@@ -427,5 +423,26 @@ public class SubtaskSubscaleHandler<OUT> {
             throw new RuntimeException(
                     "Not supported record writer type: " + upstreamRecordWriter.getClass().getName());
         }
+    }
+
+    public Tuple2<Long[], Double[]> getUpstreamMetrics(){
+        return ((ChannelSelectorRecordWriter) upstreamRecordWriter).getKeyGroupStatistics();
+    }
+
+    public void initialScaleMetricTracker(){
+        mailboxProcessor.sendScaleMail(
+                () -> scalingContext.prepareScaling(),
+                "Prepare scaling context"
+        );
+    }
+    public Long[] getProcessingKeyCounts(){
+        if(ScaleConfig.Instance.ENABLE_SUBSCALE_SCHEDULING){
+            return mainOperator.getProcessingKeyCounts();
+        }
+        return null;
+    }
+
+    public ScalingContext getScalingContext() {
+        return scalingContext;
     }
 }

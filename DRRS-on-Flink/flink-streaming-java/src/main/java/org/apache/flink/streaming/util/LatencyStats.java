@@ -72,6 +72,21 @@ public class LatencyStats {
         latencyHistogram.update(now - marker.getMarkedTime());
     }
 
+    static final String customizedName = "cl";
+    public void reportCustomizedLatency(LatencyMarker marker){
+        DescriptiveStatisticsHistogram latencyHistogram = this.latencyStats.get(customizedName);
+        if (latencyHistogram == null) {
+            latencyHistogram = new DescriptiveStatisticsHistogram(this.historySize);
+            this.latencyStats.put(customizedName, latencyHistogram);
+            metricGroup
+                    .addGroup("cl", String.valueOf(subtaskIndex))
+                    .histogram("latency", latencyHistogram);
+        }
+
+        long now = System.currentTimeMillis();
+        latencyHistogram.update(now - marker.getMarkedTime());
+    }
+
     /** Granularity for latency metrics. */
     public enum Granularity {
         SINGLE {

@@ -56,6 +56,7 @@ import org.apache.flink.runtime.highavailability.JobResultStore;
 import org.apache.flink.runtime.highavailability.JobResultStoreOptions;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobVertex;
+import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmanager.JobGraphWriter;
 import org.apache.flink.runtime.jobmaster.JobManagerRunner;
@@ -85,7 +86,7 @@ import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.FencedRpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.RpcServiceUtils;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.rest.ScaleMetricsInfo;
 import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
 import org.apache.flink.runtime.webmonitor.retriever.GatewayRetriever;
 import org.apache.flink.util.ExceptionUtils;
@@ -1477,31 +1478,33 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId>
             AsynchronousJobOperationKey operationKey,
             String operatorName,
             int newParallelism,
-            MigrateStrategyMode strategyMode,
             Time timeout) {
         final JobID jobID = operationKey.getJobId();
         final TriggerId triggerID = operationKey.getTriggerId();
         return performOperationOnJobMasterGateway(
                 jobID,
                 gateway -> gateway.triggerScale(
-                        triggerID, operatorName, newParallelism, strategyMode, timeout));
+                        triggerID, operatorName, newParallelism, timeout));
     }
 
     @Override
     public CompletableFuture<Acknowledge> triggerSubscale(
-            AsynchronousJobOperationKey operationKey, List<Integer> keys, Time infTimeout){
-        final JobID jobID = operationKey.getJobId();
-        final TriggerId triggerID = operationKey.getTriggerId();
+            JobID jobID, TriggerId triggerID, List<Integer> keys, Time infTimeout){
         log.info("Triggering subscale for job {} with triggerID {}.", jobID, triggerID);
         return performOperationOnJobMasterGateway(
                 jobID,
                 gateway -> gateway.triggerSubscale(keys, triggerID, infTimeout));
     }
-
     @Override
-    public CompletableFuture<String> getScaleStatus(JobID jobId, TriggerId triggerId){
+    public CompletableFuture<ScaleMetricsInfo> getScaleStatus(JobID jobId, TriggerId triggerId){
         return performOperationOnJobMasterGateway(
                 jobId,
                 gateway -> gateway.getScaleStatus(triggerId));
+    }
+    @Override
+    public CompletableFuture<Map<Integer, Long>> getStateSize(JobID jobID, JobVertexID vertexID){
+        return performOperationOnJobMasterGateway(
+                jobID,
+                gateway -> gateway.getStateSize(vertexID));
     }
 }

@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.partition;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.checkpoint.CheckpointException;
 import org.apache.flink.runtime.checkpoint.channel.ResultSubpartitionInfo;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
@@ -26,6 +27,7 @@ import org.apache.flink.runtime.io.network.buffer.BufferConsumer;
 import org.apache.flink.runtime.scale.state.migrate.RepartitionBuffersWithPartialRecord;
 
 import java.io.IOException;
+import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -173,7 +175,8 @@ public abstract class ResultSubpartition {
     // ------------------------------------------------------------------------
     // Scale Utils
     // ------------------------------------------------------------------------
-    public RepartitionBuffersWithPartialRecord addConfirmBarrierAsSemiPriority(BufferConsumer bufferConsumer ) {
+    public void addConfirmBarrierAsSemiPriority(
+            BufferConsumer bufferConsumer, Consumer<RepartitionBuffersWithPartialRecord> repartitionConsumer) {
         throw new UnsupportedOperationException(
                 "Not support addSemi in class " + this.getClass().getName());
     }

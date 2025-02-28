@@ -96,8 +96,11 @@ import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.RpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.RpcServiceUtils;
+import org.apache.flink.runtime.scale.io.TargetOperatorMetrics;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.scale.io.message.deploy.DownstreamTaskDeployUpdateDescriptor;
 import org.apache.flink.runtime.scale.io.message.TaskScaleDescriptor;
+import org.apache.flink.runtime.scale.io.network.UpstreamOperatorMetrics;
 import org.apache.flink.runtime.security.token.DelegationTokenReceiverRepository;
 import org.apache.flink.runtime.shuffle.ShuffleDescriptor;
 import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
@@ -2489,12 +2492,6 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
         public void acknowledgeScaleComplete(ExecutionAttemptID executionAttemptID) {
             jobMasterGateway.acknowledgeScaleComplete(executionAttemptID);
         }
-
-        @Override
-        public void notifySubscaleComplete(ExecutionAttemptID executionAttemptID, Set<Integer> completedKeyGroups) {
-            jobMasterGateway.notifySubscaleComplete(executionAttemptID, completedKeyGroups);
-        }
-
     }
 
     private class SlotActionsImpl implements SlotActions {
@@ -2776,7 +2773,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
     @Override
     public CompletableFuture<Acknowledge> triggerSubscale(
-            ExecutionAttemptID attemptId, Map<Integer,Integer> involvedKeyGroups, int subscaleID, Time rpcTimeout){
+            ExecutionAttemptID attemptId, Map<Integer, SubscaleTriggerInfo> involvedKeyGroups, int subscaleID, Time rpcTimeout){
         final Task task = taskSlotTable.getTask(attemptId);
         try{
             if (task != null) {
@@ -2795,6 +2792,69 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                     "An error occurred during triggerSubscale in {}",
                     task == null ? attemptId : task.getTaskInfo().getTaskNameWithSubtasks(),
                     e);
+            return FutureUtils.completedExceptionally(e);
+        }
+    }
+
+    @Override
+    public  CompletableFuture<Map<Integer, Long>> getStateSize(ExecutionAttemptID attemptId, Time rpcTimeout){
+        final Task task = taskSlotTable.getTask(attemptId);
+        try {
+            if (task != null) {
+                return CompletableFuture.completedFuture(task.getStateSize());
+            } else {
+                final String message =
+                        String.format(
+                                "The task %s is not running on the TaskExecutor %s.",
+                                attemptId, getResourceID().getStringWithMetadata());
+                log.error(message);
+                throw new NullPointerException(message);
+            }
+        } catch (Exception e) {
+            log.error(
+                    "An error occurred during getStateSize in {}",
+                    task == null ? attemptId : task.getTaskInfo().getTaskNameWithSubtasks(),
+                    e);
+            return FutureUtils.completedExceptionally(e);
+        }
+    }
+
+    @Override
+    public CompletableFuture<TargetOperatorMetrics> getScaleMetrics(ExecutionAttemptID attemptId){
+        final Task task = taskSlotTable.getTask(attemptId);
+        try{
+            if(task != null){
+                return CompletableFuture.completedFuture(task.getScaleMetrics());
+            }else{
+                final String message =
+                        String.format(
+                                "The task %s is not running on the TaskExecutor %s.",
+                                attemptId, getResourceID().getStringWithMetadata());
+                log.error(message);
+                throw new NullPointerException(message);
+            }
+        }catch (Exception e){
+            log.error("An error occurred during getScaleMetrics in {}", attemptId, e);
+            return FutureUtils.completedExceptionally(e);
+        }
+    }
+
+    @Override
+    public CompletableFuture<UpstreamOperatorMetrics> getUpstreamScaleMetrics(ExecutionAttemptID attemptId){
+        final Task task = taskSlotTable.getTask(attemptId);
+        try{
+            if(task != null){
+                return CompletableFuture.completedFuture(task.getUpstreamScaleMetrics());
+            }else{
+                final String message =
+                        String.format(
+                                "The task %s is not running on the TaskExecutor %s.",
+                                attemptId, getResourceID().getStringWithMetadata());
+                log.error(message);
+                throw new NullPointerException(message);
+            }
+        }catch (Exception e){
+            log.error("An error occurred during getUpstreamScaleMetrics in {}", attemptId, e);
             return FutureUtils.completedExceptionally(e);
         }
     }

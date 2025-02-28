@@ -19,8 +19,11 @@ package org.apache.flink.streaming.runtime.partitioner;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.io.network.api.writer.SubtaskStateMapper;
 import org.apache.flink.runtime.plugable.SerializationDelegate;
+import org.apache.flink.runtime.scale.io.KeyGroupRecordTracker;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.Preconditions;
@@ -54,7 +57,7 @@ public class KeyGroupStreamPartitioner<T, K> extends StreamPartitioner<T>
     private int maxParallelism;
 
     /**
-     * By default, Flink do not use an explicit routing table to determine the target channel,
+     * By default, Flink do not use an explicit routing table to determine the target channel in this key-group partitioner.
      * but instead uses implicit rules to determine the target channel.
      * <p>
      * However, when the scale operation occurs, we need this to route the key more flexibly.
@@ -62,6 +65,8 @@ public class KeyGroupStreamPartitioner<T, K> extends StreamPartitioner<T>
     private int[] routingTable = null;
     // will be set to true after any scale operation, and keep true throughout the whole life cycle
     private Boolean usingRoutingTable = false;
+
+    private transient KeyGroupRecordTracker keyGroupRecordTracker = null;
 
     public KeyGroupStreamPartitioner(KeySelector<T, K> keySelector, int maxParallelism) {
         Preconditions.checkArgument(maxParallelism > 0, "Number of key-groups must be > 0!");
@@ -82,6 +87,9 @@ public class KeyGroupStreamPartitioner<T, K> extends StreamPartitioner<T>
             throw new RuntimeException(
                     "Could not extract key from " + record.getInstance().getValue(), e);
         }
+
+        int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
+        keyGroupRecordTracker.updateInputRecordMetrics(keyGroup);
 
         if(usingRoutingTable){
             checkNotNull(routingTable,
@@ -125,6 +133,7 @@ public class KeyGroupStreamPartitioner<T, K> extends StreamPartitioner<T>
     public void configure(int maxParallelism) {
         KeyGroupRangeAssignment.checkParallelismPreconditions(maxParallelism);
         this.maxParallelism = maxParallelism;
+        keyGroupRecordTracker = new KeyGroupRecordTracker(maxParallelism,true );
     }
 
     @Override
@@ -167,18 +176,26 @@ public class KeyGroupStreamPartitioner<T, K> extends StreamPartitioner<T>
     }
 
     @Override
-    public Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer,Integer> newKeyPartitions){
+    public Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer, SubscaleTriggerInfo> newKeyPartitions){
         checkState(usingRoutingTable,
                 "No routing table found in " + getClass().getSimpleName());
         // return unmodifiable map
         Map<Integer,Integer> result = new HashMap<>();
 
         // update routing table
-        for (Map.Entry<Integer, Integer> entry : newKeyPartitions.entrySet()) {
+        for (Map.Entry<Integer, SubscaleTriggerInfo> entry : newKeyPartitions.entrySet()) {
             result.put(entry.getKey(), routingTable[entry.getKey()]);
-            routingTable[entry.getKey()] = entry.getValue();
+            routingTable[entry.getKey()] = entry.getValue().newPartitioningPos;
         }
         return result;
+    }
+
+    @Override
+    public Tuple2<Long[], Double[]> getKeyGroupStatistics(){
+        return new Tuple2<>(
+                keyGroupRecordTracker.getTotalCounts(),
+                keyGroupRecordTracker.getRates()
+        );
     }
 
 

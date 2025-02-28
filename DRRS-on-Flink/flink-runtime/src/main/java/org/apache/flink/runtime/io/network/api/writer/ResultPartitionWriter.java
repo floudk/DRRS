@@ -20,6 +20,7 @@ package org.apache.flink.runtime.io.network.api.writer;
 
 import org.apache.commons.lang3.tuple.Pair;
 
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.checkpoint.CheckpointException;
 import org.apache.flink.runtime.event.AbstractEvent;
 import org.apache.flink.runtime.io.AvailabilityProvider;
@@ -39,6 +40,7 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * A record-oriented runtime result writer API for producing results.
@@ -169,8 +171,10 @@ public interface ResultPartitionWriter extends AutoCloseable, AvailabilityProvid
                 "emitEvent is not supported in " + this.getClass().getSimpleName());
     }
 
-    default Map<Integer,RepartitionBuffersWithPartialRecord> emitConfirmBarrierEvent(
-            AbstractEvent event, Set<Integer> affectedSourceSubtasks) throws IOException{
+    default void emitConfirmBarrierEvent(
+            AbstractEvent event,
+            Set<Integer> affectedSourceSubtasks,
+            Consumer<RepartitionBuffersWithPartialRecord> repartitionConsumer) throws IOException{
         throw new UnsupportedOperationException(
                 "emitEvent is not supported in " + this.getClass().getSimpleName());
     }

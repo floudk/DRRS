@@ -1024,10 +1024,13 @@ public class WebMonitorEndpoint<T extends RestfulGateway> extends RestServerEndp
                 .new SubscaleTriggerHandler(leaderRetriever, timeout, responseHeaders);
         final JobScaleHandlers.ScaleStatusHandler scaleStatusHandler = jobScaleHandlers
                 .new ScaleStatusHandler(leaderRetriever, timeout, responseHeaders);
+        final JobScaleHandlers.StateSizeHandler stateSizeHandler = jobScaleHandlers
+                .new StateSizeHandler(leaderRetriever, timeout, responseHeaders);
 
         handlers.add(Tuple2.of(scaleTriggerHandler.getMessageHeaders(), scaleTriggerHandler));
         handlers.add(Tuple2.of(subscaleTriggerHandler.getMessageHeaders(), subscaleTriggerHandler));
         handlers.add(Tuple2.of(scaleStatusHandler.getMessageHeaders(), scaleStatusHandler));
+        handlers.add(Tuple2.of(stateSizeHandler.getMessageHeaders(), stateSizeHandler));
 
         handlers.stream()
                 .map(tuple -> tuple.f1)

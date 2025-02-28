@@ -1365,7 +1365,6 @@ public class CliFrontend {
         final JobID jobId;
         final String operatorName;
         final int newParallelism;
-        final String strategy;
 
 
         if(cleanedArgs.length >= 3) {
@@ -1373,12 +1372,10 @@ public class CliFrontend {
             jobId = parseJobId(jobIdString);
             operatorName = cleanedArgs[1];
             newParallelism = Integer.parseInt(cleanedArgs[2]);
-            strategy = cleanedArgs.length >= 4 ? cleanedArgs[3] : "FLUID_MIGRATE";
         }else{
             throw new CliArgsException("Missing JobID, OperatorName or NewParallelism."
                     + "Specify a [JobID] [OperatorName] [NewParallelism] to scale a job.");
         }
-
 
         if(cleanedArgs.length >= 5){
             logAndSysout("Provided more arguments than required. Ignoring not needed arguments.");
@@ -1393,7 +1390,6 @@ public class CliFrontend {
                             jobId,
                             operatorName,
                             newParallelism,
-                            strategy,
                             getClientTimeout(effectiveConfiguration));
                 });
     }
@@ -1405,11 +1401,10 @@ public class CliFrontend {
             JobID jobId,
             String operatorName,
             int newParallelism,
-            String strategy,
             Duration clientTimeout ) throws FlinkException {
-        logAndSysout("Triggering scale for job " + jobId +"("+strategy +"), waiting for response...");
+        logAndSysout("Triggering scale for job " + jobId +", waiting for response...");
         CompletableFuture<String> result =
-                clusterClient.triggerScale(jobId, operatorName, newParallelism, strategy);
+                clusterClient.triggerScale(jobId, operatorName, newParallelism);
 
         try {
             final String triggerID =

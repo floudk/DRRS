@@ -21,6 +21,9 @@ package org.apache.flink.runtime.io.network.buffer;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.io.network.buffer.BufferBuilder.PositionMarker;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.Closeable;
@@ -40,6 +43,9 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 @NotThreadSafe
 public class BufferConsumer implements Closeable {
+
+    public static final Logger LOG = LoggerFactory.getLogger(BufferConsumer.class);
+
     private final Buffer buffer;
 
     private final CachedPositionMarker writerPosition;
@@ -89,6 +95,24 @@ public class BufferConsumer implements Closeable {
         Buffer slice =
                 buffer.readOnlySlice(
                         currentReaderPosition, cachedWriterPosition - currentReaderPosition);
+//        if (!Thread.currentThread().getName().contains("Source")&&
+//                !Thread.currentThread().getName().contains("maxWindow") &&
+//                !Thread.currentThread().getName().contains("FileSink")){
+//
+//            LOG.info("{}: Build slice: {} bytes ({}-{}) in Thread {}",
+//                    this.hashCode(),
+//                    slice.getSize(),
+//                    currentReaderPosition, cachedWriterPosition, Thread.currentThread().getName());
+//            if (!Thread.currentThread().getName().contains("map")){
+//                // print invoke trace (last 10)
+//                StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
+//                StringBuilder sb = new StringBuilder();
+//                for (int i = 0; i < 10 && i < stackTraceElements.length; i++) {
+//                    sb.append(stackTraceElements[i].toString()).append("\n");
+//                }
+//                LOG.info("Non-map build invoke: {}", sb);
+//            }
+//        }
         currentReaderPosition = cachedWriterPosition;
         return slice.retainBuffer();
     }
@@ -99,6 +123,34 @@ public class BufferConsumer implements Closeable {
         int cachedWriterPosition = writerPosition.getCached();
         int bytesReadable = cachedWriterPosition - currentReaderPosition;
         checkState(bytesToSkip <= bytesReadable, "bytes to skip beyond readable range");
+//        if (!Thread.currentThread().getName().contains("Source")&&
+//                !Thread.currentThread().getName().contains("maxWindow") &&
+//                !Thread.currentThread().getName().contains("FileSink")){
+//            LOG.info("{}: Skip {} bytes (currentReaderPosition: {} -> {}) in Thread {}",
+//                    this.hashCode(),
+//                    bytesToSkip,
+//                    currentReaderPosition,  currentReaderPosition + bytesToSkip, Thread.currentThread().getName());
+//
+//            if (!Thread.currentThread().getName().contains("map")){
+//                // print invoke trace (last 10)
+//                StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
+//                StringBuilder sb = new StringBuilder();
+//                for (int i = 1; i < 5 && i < stackTraceElements.length; i++) {
+//                    sb.append(stackTraceElements[i].toString()).append("\n");
+//                }
+//                // remove last \n
+//                sb.deleteCharAt(sb.length() - 1);
+//                LOG.info("{}: Skip {} bytes (currentReaderPosition: {} -> {}) in Thread {} with invoke trace: {}",
+//                        this.hashCode(),
+//                        bytesToSkip,
+//                        currentReaderPosition,  currentReaderPosition + bytesToSkip, Thread.currentThread().getName(), sb);
+//            }else{
+//                LOG.info("{}: Skip {} bytes (currentReaderPosition: {} -> {}) in Thread {}",
+//                        this.hashCode(),
+//                        bytesToSkip,
+//                        currentReaderPosition,  currentReaderPosition + bytesToSkip, Thread.currentThread().getName());
+//            }
+//        }
         currentReaderPosition += bytesToSkip;
     }
 
@@ -158,7 +210,7 @@ public class BufferConsumer implements Closeable {
         return currentReaderPosition;
     }
 
-    boolean isStartOfDataBuffer() {
+    public boolean isStartOfDataBuffer() {
         return buffer.getDataType() == DATA_BUFFER && currentReaderPosition == 0;
     }
 

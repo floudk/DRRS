@@ -17,7 +17,9 @@
  */
 
 package org.apache.flink.runtime.io.network.api.writer;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.core.io.IOReadableWritable;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 
 import java.util.Map;
 
@@ -61,9 +63,15 @@ public interface ChannelSelector<T extends IOReadableWritable> {
         setup(newNumberOfChannels);
     }
 
-    default Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer,Integer> newKeyPartitions){
+    default Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer, SubscaleTriggerInfo> newKeyPartitions){
         throw new UnsupportedOperationException("ChannelSelector:"
                 + this.getClass().getSimpleName()
                 + " does not support getInvolvedSubpartitions");
+    }
+
+    default Tuple2<Long[], Double[]> getKeyGroupStatistics(){
+        throw new UnsupportedOperationException("ChannelSelector:"
+                + this.getClass().getSimpleName()
+                + " does not support getKeyGroupStatistics");
     }
 }

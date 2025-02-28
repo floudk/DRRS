@@ -45,7 +45,7 @@ import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.rest.messages.TriggerId;
 import org.apache.flink.runtime.rpc.FencedRpcGateway;
 import org.apache.flink.runtime.rpc.RpcTimeout;
-import org.apache.flink.runtime.scale.state.migrate.MigrateStrategyMode;
+import org.apache.flink.runtime.scale.rest.ScaleMetricsInfo;
 import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
 import org.apache.flink.runtime.slots.ResourceRequirement;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorToJobManagerHeartbeatPayload;
@@ -57,6 +57,7 @@ import javax.annotation.Nullable;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
@@ -310,7 +311,6 @@ public interface JobMasterGateway
             TriggerId triggerID,
             String operatorName,
             int newParallelism,
-            MigrateStrategyMode strategyMode,
             @RpcTimeout Time timeout){
         throw new UnsupportedOperationException("triggerScale is not supported in "
                 + getClass().getSimpleName());
@@ -326,13 +326,13 @@ public interface JobMasterGateway
                 + getClass().getSimpleName());
     }
 
-    default void notifySubscaleComplete(ExecutionAttemptID executionAttemptID, Set<Integer> completedKeyGroups) {
-        throw new UnsupportedOperationException("notifySubscaleComplete is not supported in "
+    default CompletableFuture<ScaleMetricsInfo> getScaleStatus(TriggerId triggerId){
+        throw new UnsupportedOperationException("getScaleStatus is not supported in "
                 + getClass().getSimpleName());
     }
 
-    default CompletableFuture<String> getScaleStatus(TriggerId triggerId){
-        throw new UnsupportedOperationException("getScaleStatus is not supported in "
+    default CompletableFuture<Map<Integer,Long>> getStateSize(JobVertexID vertexID){
+        throw new UnsupportedOperationException("getStateSize is not supported in "
                 + getClass().getSimpleName());
     }
 }

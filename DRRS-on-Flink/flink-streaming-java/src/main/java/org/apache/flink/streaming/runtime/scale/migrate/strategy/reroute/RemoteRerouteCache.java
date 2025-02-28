@@ -115,7 +115,7 @@ public class RemoteRerouteCache extends RerouteCache<StreamRecord> {
         buffer.readerIndex(0);
         while (inputView.remaining() > 0) {
             int recordLength = inputView.readInt();
-            LOG.info("Read record with {}/{} bytes from buffer", recordLength, inputView.remaining());
+            // LOG.info("Read record with {}/{} bytes from buffer", recordLength, inputView.remaining());
             checkState(inputView.remaining() >= recordLength,
                     "Invalid buffer: need " + recordLength + " bytes, but only " + inputView.remaining() + " bytes left");
 

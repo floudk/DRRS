@@ -2,9 +2,7 @@ package org.apache.flink.runtime.scale;
 
 import org.apache.flink.api.common.TaskInfo;
 import org.apache.flink.runtime.scale.state.FlexibleKeyGroupRange;
-
-import org.apache.flink.runtime.state.KeyGroupRange;
-import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
+import org.apache.flink.util.function.RunnableWithException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,9 +13,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public class ScalingContext {
     static final Logger LOG = LoggerFactory.getLogger(ScalingContext.class);
@@ -30,9 +32,11 @@ public class ScalingContext {
 
     // key groups from other tasks that are sent to this task
 
-    private final Set<Integer> pendingInKeys = new HashSet<>(); // updated by main thread immediately after states merged
+    private final Set<Integer> pendingInKeysCache = ConcurrentHashMap.newKeySet();
+
+    private final Set<Integer> pendingInKeys =  ConcurrentHashMap.newKeySet(); // updated by main thread immediately after states merged
     private final Set<Integer> allConfirmedInKeys = new HashSet<>(); // keys that have all confirmed but not received
-    private final Set<Integer> completedInKeys = new HashSet<>(); // updated by main thread immediately after states merged
+    private final Set<Integer> completedInKeys = ConcurrentHashMap.newKeySet();// updated by main thread immediately after states merged
 
     // key groups from this task that are sent to other tasks
     private final Map<Integer, List<Integer>> targetTaskWithOutKeys = new HashMap<>();
@@ -44,36 +48,39 @@ public class ScalingContext {
     private CompletableFuture<Void> completeFuture;
 
     private final SubscaleTracker subscaleTracker;
-    public KeyGroupRange  finalKeyGroupRange;
-
 
     private final Map<Integer, Integer> keyToSubscaleID = new HashMap<>();
 
+    private BiConsumer<RunnableWithException,String> scaleMailConsumer;
+
+    public AtomicInteger acksWaitingToSend = new AtomicInteger();
+    public CompletableFuture<Void> channelCloseFuture = new CompletableFuture<>();
+
     public ScalingContext(
             TaskInfo taskInfo,
-            Consumer<Set<Integer>> subscaleTrackerNotifier,
             Consumer<Integer> channelCloser) {
         this.taskInfo = taskInfo;
         // initialize parallelismPair to [-1, -1]
         this.parallelismPair = new int[]{-1, -1};
-        subscaleTracker = new SubscaleTracker(subscaleTrackerNotifier, channelCloser);
+        subscaleTracker = new SubscaleTracker(channelCloser);
     }
-
 
     public void updateTaskInfo(int newParallelism) {
         parallelismPair[0] = taskInfo.getNumberOfParallelSubtasks();
         parallelismPair[1] = newParallelism;
         LOG.info("{} update task info with parallelisms: {} -> {}", taskInfo.getTaskNameWithSubtasks(), parallelismPair[0],  parallelismPair[1]);
         taskInfo.scale(newParallelism);
-        this.finalKeyGroupRange = KeyGroupRangeAssignment.computeKeyGroupRangeForOperatorIndex(
-                taskInfo.getMaxNumberOfParallelSubtasks(),
-                newParallelism,
-                taskInfo.getIndexOfThisSubtask());
     }
 
-
-    public void triggered(FlexibleKeyGroupRange currentKeyGroups){
-        transition(Stage.TRIGGERED);
+    public void prepareScaling() {
+        // only allow non-scale -> preparing scale
+        // when the status is already scaling, skip the preparation
+        if (status == Stage.NON_SCALE) {
+            transition(Stage.PREPARING_SCALE);
+        }
+    }
+    public void startScaling(FlexibleKeyGroupRange currentKeyGroups){
+        transition(Stage.SCALING);
         this.localKeyGroups = currentKeyGroups;
         if (isNewlyCreatedTask()) {
             this.localKeyGroups.clear();
@@ -84,6 +91,13 @@ public class ScalingContext {
         checkArgument(keyToSubscaleID.containsKey(keyGroupIndex),
                 "keyGroupIndex %s is not in keyToSubscaleID %s", keyGroupIndex, keyToSubscaleID);
         return keyToSubscaleID.get(keyGroupIndex);
+    }
+
+    public void ackSent(){
+        int cur = acksWaitingToSend.decrementAndGet();
+        if (cur == 0 && status == Stage.COMPLETING){
+            channelCloseFuture.complete(null);
+        }
     }
 
 
@@ -98,14 +112,14 @@ public class ScalingContext {
                          Map<Integer, List<Integer>> targetTaskWithOutKeys,
                         int subscaleID) {
 
-
-
         for (List<Integer> keys : sourceTaskWithInKeys.values()) {
             pendingInKeys.addAll(keys);
+            pendingInKeysCache.addAll(keys);
             keys.forEach(
                     keyGroup -> keyToSubscaleID.put(keyGroup, subscaleID)
             );
         }
+
 
         this.targetTaskWithOutKeys.putAll(targetTaskWithOutKeys);
 
@@ -116,6 +130,10 @@ public class ScalingContext {
             }
         }
         subscaleTracker.addSubscale(sourceTaskWithInKeys, subscaleID);
+
+        sourceTaskWithInKeys.forEach(
+                (sourceTask, keys) -> acksWaitingToSend.addAndGet(keys.size())
+        );
 
         LOG.info("{}: set subscale context with sourceTaskWithInKeys: {} and targetTaskWithOutKeys: {}, current local key groups: {}, keyToSubscaleID: {}",
                 subscaleID, sourceTaskWithInKeys, targetTaskWithOutKeys, localKeyGroups, keyToSubscaleID);
@@ -152,6 +170,19 @@ public class ScalingContext {
         return parallelismPair[0] == parallelismPair[1];
     }
 
+    void notifyComplete() {
+        LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
+        transition(Stage.NON_SCALE);
+        // while the current thread is actually the main thread, but some scaling mails may not be consumed yet
+        // so we still add a mail consumer to ensure all mails are consumed
+        scaleMailConsumer.accept(
+                () -> {
+                    completeFuture.complete(null);
+                    LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
+                }, "complete"
+        );
+    }
+
     // must running in main thread
     public void removeFromOutPendingKeys(List<Integer> keyGroups) {
         keyGroups.forEach(
@@ -163,9 +194,9 @@ public class ScalingContext {
                 }
         );
         if (pendingOutKeys.isEmpty() && status == Stage.COMPLETING && checkAllSubscaleComplete()) {
-            LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
-            transition(Stage.NON_SCALE);
-            completeFuture.complete(null);
+            notifyComplete();
+        }else{
+            LOG.info(" remove {} , rest pendingOutKeys: {}", keyGroups, pendingOutKeys);
         }
     }
     public void notifyAllConfirmBarriersRerouted(Set<Integer> involvedKeys){
@@ -179,9 +210,7 @@ public class ScalingContext {
                 }
         );
         if (completedOutKeys.isEmpty() && status == Stage.COMPLETING && checkAllSubscaleComplete()) {
-            LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
-            transition(Stage.NON_SCALE);
-            completeFuture.complete(null);
+            notifyComplete();
         }
     }
 
@@ -196,9 +225,7 @@ public class ScalingContext {
             subscaleTracker.notifyTransferredIn(keyGroup, keyToSubscaleID.get(keyGroup), fromTaskIndex);
         }
         if (pendingInKeys.isEmpty() && status == Stage.COMPLETING && checkAllSubscaleComplete()) {
-            LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
-            transition(Stage.NON_SCALE);
-            completeFuture.complete(null);
+            notifyComplete();
         }
     }
 
@@ -212,9 +239,7 @@ public class ScalingContext {
         }
 
         if (completedInKeys.isEmpty() && completeFuture != null && checkAllSubscaleComplete()) {
-            LOG.info("{} all subtasks have completed, notify the coordinator", taskInfo.getTaskNameWithSubtasks());
-            transition(Stage.NON_SCALE);
-            completeFuture.complete(null);
+            notifyComplete();
         }
     }
 
@@ -234,10 +259,15 @@ public class ScalingContext {
     }
 
 
-    public void registerCompleteNotifier(Runnable completeNotifier) {
+    public void registerCompleteNotifier(Runnable completeNotifier, BiConsumer<RunnableWithException,String> scaleMailConsumer) {
         transition(Stage.COMPLETING);
+        if (acksWaitingToSend.get() == 0 && !channelCloseFuture.isDone()){
+            channelCloseFuture.complete(null);
+        }
+
         // check if all subtasks have completed, if so, notify the coordinator
         // if not, wait for the completion of all subtasks
+        this.scaleMailConsumer = scaleMailConsumer;
 
         // check out keys
         if (checkAllSubscaleComplete()) {
@@ -273,7 +303,8 @@ public class ScalingContext {
 
     public enum Stage {
         NON_SCALE,
-        TRIGGERED,
+        PREPARING_SCALE,
+        SCALING,
         COMPLETING,
     }
     private Stage status = Stage.NON_SCALE; // default status
@@ -292,11 +323,42 @@ public class ScalingContext {
     public boolean isScaling() {
         return status != Stage.NON_SCALE;
     }
+    public boolean isPreparing() {
+        return status == Stage.PREPARING_SCALE;
+    }
     public String getTaskName() {
         return taskInfo.getTaskNameWithSubtasks();
     }
     public int getSubtaskIndex() {
         return taskInfo.getIndexOfThisSubtask();
+    }
+    public List<Integer> getLocalKeyGroups(){
+        checkNotNull(localKeyGroups, "localKeyGroups is not initialized");
+        return localKeyGroups.toList();
+    }
+    public Map<Integer,Integer> getMigrationStatus(){
+        Map<Integer, Integer> migrationStatus = new HashMap<>();
+
+
+        Set<Integer> temp = new HashSet<>(pendingInKeysCache);
+        temp.removeAll(completedInKeys); // transferred in but not implicit confirmed
+        temp.removeAll(pendingInKeys); // not transferred in yet
+        temp.forEach(keyGroup -> migrationStatus.put(keyGroup, 3));
+
+        temp.clear();
+        temp.addAll(pendingInKeys);
+        temp.forEach(keyGroup -> migrationStatus.put(keyGroup, 1));
+
+        temp.clear();
+        temp.addAll(completedInKeys);
+        temp.forEach(keyGroup -> migrationStatus.put(keyGroup, 2));
+
+        return migrationStatus;
+    }
+
+    // async-thread
+    public int getOngoingMigratingProcess(){
+        return subscaleTracker.stillMigratingTrackingProgress;
     }
 
 }

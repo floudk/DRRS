@@ -19,7 +19,9 @@
 package org.apache.flink.runtime.io.network.api.writer;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.core.io.IOReadableWritable;
+import org.apache.flink.runtime.scale.io.SubscaleTriggerInfo;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -90,8 +92,12 @@ public final class ChannelSelectorRecordWriter<T extends IOReadableWritable>
         channelSelector.expand(numberOfChannels);
     }
 
-    public Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer,Integer> newKeyPartitions) {
+    public Map<Integer,Integer> getAndUpdateRoutingTable(Map<Integer, SubscaleTriggerInfo> newKeyPartitions) {
         return channelSelector.getAndUpdateRoutingTable(newKeyPartitions);
+    }
+
+    public Tuple2<Long[], Double[]> getKeyGroupStatistics() {
+        return channelSelector.getKeyGroupStatistics();
     }
 
 }

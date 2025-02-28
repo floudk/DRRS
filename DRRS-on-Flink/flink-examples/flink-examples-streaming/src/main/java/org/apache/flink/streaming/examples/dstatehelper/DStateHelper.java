@@ -44,7 +44,7 @@ public class DStateHelper {
         UNIFORM, NORMAL, ZIPF
     }
     enum RecordsPerKeyDistribution {
-        EVENLY, STATE_SIZE
+        EVENLY, STATE_SIZE, ZIPF
     }
     enum StateSizeDistribution {
         UNIFORM, NORMAL, ZIPF
@@ -71,6 +71,7 @@ public class DStateHelper {
     static double processingTimeStddev = 30; // ms
 
     static RecordsPerKeyDistribution recordsPerKeyDistribution = RecordsPerKeyDistribution.EVENLY;
+    static double keySkewFactor = 0.0; // 0.0 means no skew
 
     // ------------------- state arguments -------------------
     static StateSizeDistribution stateSizeDistribution = StateSizeDistribution.UNIFORM;
@@ -95,9 +96,12 @@ public class DStateHelper {
                         inputDistribution,
                         sourceParallelism,
                         recordSize,
-                        processingTimeDistribution,processingTimeMean,processingTimeStddev,
-                        recordsPerKeyDistribution))
-                .setParallelism(sourceParallelism).name("source").slotSharingGroup("exclusive-source");
+                        processingTimeDistribution,
+                        processingTimeMean,
+                        processingTimeStddev,
+                        recordsPerKeyDistribution,
+                        keySkewFactor)
+                ).setParallelism(sourceParallelism).name("source").slotSharingGroup("exclusive-source");
 
 
         KeyedStream<Tuple5<String, Integer, Long, Long, byte[]>, String> keyedStream =
@@ -145,9 +149,11 @@ public class DStateHelper {
         static final String PROCESSING_TIME_STDDEV = "processingTimeStddev";
         static final String RECORDS_PER_KEY_DISTRIBUTION = "recordsPerKeyDistribution";
         static final String STATE_SIZE_DISTRIBUTION = "stateSizeDistribution";
+        static final String KEY_SKEW_FACTOR = "keySkewFactor";
         static final String STATE_SIZE_MEAN = "stateSizeMean";
         static final String SOURCE_PARALLELISM = "sourceParallelism";
         static final String SINK_PARALLELISM = "sinkParallelism";
+
 
 
         static void fromArgs(String[] args)  {
@@ -199,11 +205,16 @@ public class DStateHelper {
             if(params.has(SINK_PARALLELISM)){
                 sinkParallelism = params.getInt(SINK_PARALLELISM);
             }
+            if (params.has(KEY_SKEW_FACTOR)) {
+                keySkewFactor = params.getDouble(KEY_SKEW_FACTOR);
+            }
 
             System.out.println("Configuration loaded successfully");
             System.out.println("totalRuntime: " + totalRuntime);
             System.out.println("keyList: " + keyList);
             System.out.println("inputRate: " + inputRate);
+            System.out.println("records_per_key_distribution: " + recordsPerKeyDistribution +", keySkewFactor: " + keySkewFactor);
+
         }
     }
 
@@ -300,6 +311,9 @@ public class DStateHelper {
         double processingTimeStddev;
 
         RecordsPerKeyDistribution recordsPerKeyDistribution;
+        private final double skewFactor;
+        private double[] cumulativeWeights;
+
 
         private transient ListState<Tuple5<Map<String, Integer>, Integer, Integer, Integer, Long>> checkpointedState;
         private Map<String, Integer> keyWithCount = new HashMap<>();
@@ -319,11 +333,15 @@ public class DStateHelper {
                         ProcessingTimeDistribution recordProcessingTimeDistribution,
                         double processingTimeMean,
                         double processingTimeStddev,
-                        RecordsPerKeyDistribution recordsPerKeyDistribution) {
+                        RecordsPerKeyDistribution recordsPerKeyDistribution,
+                        double keySkewFactor) {
 
             if (runtime < 1|| rate < 1 || recordSize < 1 || processingTimeMean < 1) {
                 throw new IllegalArgumentException("All parameters must be greater than 0");
             }
+
+
+            this.skewFactor = keySkewFactor;
 
             this.runtime=runtime;
             this.keyList = keyList;
@@ -348,6 +366,25 @@ public class DStateHelper {
             // check sum of input rates = rate
             if (Arrays.stream(inputRates).sum() != rate) {
                 throw new IllegalArgumentException("Sum of input rates must be equal to the total rate");
+            }
+
+
+            if (recordsPerKeyDistribution == RecordsPerKeyDistribution.ZIPF) {
+                if (keySkewFactor < 0) {
+                    throw new IllegalArgumentException("Skew factor must be greater than 0 for SKEW distribution.");
+                } else if (keySkewFactor == 0) {
+                    LOG.warn("Skew factor is 0, falling back to EVEN distribution.");
+                    recordsPerKeyDistribution = RecordsPerKeyDistribution.EVENLY;
+                }else{
+                    int keyCount = keyList.size();
+                    cumulativeWeights = new double[keyCount];
+                    double sum = 0.0;
+                    for (int i = 0; i < keyCount; i++) {
+                        sum += 1.0 / Math.pow(i + 1, keySkewFactor);
+                        cumulativeWeights[i] = sum;
+                    }
+                    LOG.info("Cumulative weights: {}", Arrays.toString(cumulativeWeights));
+                }
             }
 
             this.recordSize=recordSize;
@@ -471,6 +508,18 @@ public class DStateHelper {
             switch (recordsPerKeyDistribution) {
                 case EVENLY:
                     return keyList.get(localRandom.nextInt(keyList.size()));
+                case ZIPF:
+                    if (cumulativeWeights == null || cumulativeWeights.length == 0) {
+                        throw new IllegalStateException("Cumulative weights not initialized for ZIPF distribution.");
+                    }
+                    double maxWeight = cumulativeWeights[cumulativeWeights.length - 1];
+                    double r = localRandom.nextDouble() * maxWeight;
+                    int index = Arrays.binarySearch(cumulativeWeights, r);
+                    if (index < 0) {
+                        index = -index - 1;
+                    }
+                    index = Math.min(index, keyList.size() - 1);
+                    return keyList.get(index);
                 case STATE_SIZE:
                     throw new UnsupportedOperationException("Not implemented yet");
                 default:
@@ -483,6 +532,7 @@ public class DStateHelper {
             isRunning = false;
         }
 
+        // to support checkpoint
         @Override
         public void snapshotState(FunctionSnapshotContext context) throws Exception {
             checkpointedState.clear();
@@ -520,6 +570,4 @@ public class DStateHelper {
             }
         }
     }
-
-
 }

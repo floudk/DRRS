@@ -8,6 +8,7 @@ import org.apache.flink.runtime.state.heap.StateMap;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 public interface ScalableStateBackend {
 
@@ -41,5 +42,10 @@ public interface ScalableStateBackend {
     default StateSnapshotTransformer getStateSnapshotTransformer(String stateName){
        throw new UnsupportedOperationException(
                 "getStateSnapshotTransformer is not supported in " + getClass().getSimpleName());
+    }
+
+    default Map<Integer, Long> getStateSizes(){
+        throw new UnsupportedOperationException(
+                "getStateSizes is not supported in " + getClass().getSimpleName());
     }
 }

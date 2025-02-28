@@ -16,7 +16,6 @@ public class ScaleTriggerRequestBody implements RequestBody {
     private static final String FIELD_NAME_OPERATOR_NAME = "operator-name";
     private static final String FIELD_NAME_NEW_PARALLELISM = "new-parallelism";
     private static final String FIELD_NAME_TRIGGER_ID = "trigger-id";
-    private static final String FIELD_NAME_MIGRATE_STRATEGY = "migrate-strategy";
 
     @JsonProperty(FIELD_NAME_OPERATOR_NAME)
     private final String operatorName;
@@ -28,19 +27,14 @@ public class ScaleTriggerRequestBody implements RequestBody {
     @Nullable
     private final TriggerId triggerId;
 
-    @JsonProperty(FIELD_NAME_MIGRATE_STRATEGY)
-    private final String migrateStrategy;
-
     @JsonCreator
     public ScaleTriggerRequestBody(
             @JsonProperty(FIELD_NAME_OPERATOR_NAME) String operatorName,
             @JsonProperty(FIELD_NAME_NEW_PARALLELISM) int newParallelism,
-            @Nullable @JsonProperty(FIELD_NAME_TRIGGER_ID) TriggerId triggerId,
-            @JsonProperty(FIELD_NAME_MIGRATE_STRATEGY) String migrateStrategy) {
+            @Nullable @JsonProperty(FIELD_NAME_TRIGGER_ID) TriggerId triggerId) {
         this.operatorName = operatorName;
         this.newParallelism = newParallelism;
         this.triggerId = triggerId;
-        this.migrateStrategy = migrateStrategy;
     }
 
     public int getNewParallelism() {
@@ -48,9 +42,6 @@ public class ScaleTriggerRequestBody implements RequestBody {
     }
     public String getOperatorName() {
         return operatorName;
-    }
-    public String getMigrateStrategy() {
-        return migrateStrategy;
     }
     @JsonIgnore
     public Optional<TriggerId> getTriggerId() {

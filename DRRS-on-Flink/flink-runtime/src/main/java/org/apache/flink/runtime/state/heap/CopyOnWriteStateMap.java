@@ -20,6 +20,9 @@ package org.apache.flink.runtime.state.heap;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.core.memory.ByteArrayOutputStreamWithPos;
+import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
+import org.apache.flink.runtime.scale.ScaleConfig;
 import org.apache.flink.runtime.state.StateEntry;
 import org.apache.flink.runtime.state.StateTransformationFunction;
 import org.apache.flink.runtime.state.internal.InternalKvState;
@@ -44,6 +47,7 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import static org.apache.flink.util.CollectionUtil.MAX_ARRAY_SIZE;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Implementation of Flink's in-memory state maps with copy-on-write support. This map does not
@@ -216,7 +220,7 @@ public class CopyOnWriteStateMap<K, N, S> extends StateMap<K, N, S> {
      */
     @SuppressWarnings("unchecked")
     private CopyOnWriteStateMap(int capacity, TypeSerializer<S> stateSerializer) {
-        this.stateSerializer = Preconditions.checkNotNull(stateSerializer);
+        this.stateSerializer = checkNotNull(stateSerializer);
 
         // initialized maps to EMPTY_TABLE.
         this.primaryTable = (StateMapEntry<K, N, S>[]) EMPTY_TABLE;
@@ -795,7 +799,7 @@ public class CopyOnWriteStateMap<K, N, S> extends StateMap<K, N, S> {
     }
 
     public void setStateSerializer(TypeSerializer<S> stateSerializer) {
-        this.stateSerializer = Preconditions.checkNotNull(stateSerializer);
+        this.stateSerializer = checkNotNull(stateSerializer);
     }
 
     // StateMapEntry
@@ -1089,5 +1093,60 @@ public class CopyOnWriteStateMap<K, N, S> extends StateMap<K, N, S> {
         public void update(StateEntry<K, N, S> stateEntry, S newValue) {
             CopyOnWriteStateMap.this.put(stateEntry.getKey(), stateEntry.getNamespace(), newValue);
         }
+    }
+
+    @Override
+    public Long getStateSizes() {
+        return calculateTableSize(primaryTable, primaryTableSize) +
+                calculateTableSize(incrementalRehashTable, incrementalRehashTableSize);
+    }
+
+    private long calculateTableSize(StateEntry<K, N, S>[] table, long tableSize) {
+        if (tableSize <= 0) {
+            return 0;
+        }
+
+        // Calculate sample size:
+        // If tableSize < 10, use all entries
+        // Otherwise, use min(10, tableSize / SAMPLE_RATE)
+        int sampleSize;
+        if (tableSize < 10) {
+            sampleSize = (int) tableSize;
+        } else {
+            sampleSize = Math.max(10, (int) (tableSize / ScaleConfig.Instance.STATE_SAMPLE_RATE));
+        }
+
+        TypeSerializer<S> serializer = stateSerializer.duplicate();
+        ByteArrayOutputStreamWithPos os = new ByteArrayOutputStreamWithPos();
+        DataOutputViewStreamWrapper dov = new DataOutputViewStreamWrapper(os);
+
+        long sampleSum = 0;
+        int sampleCount = 0;
+
+        // Sample entries to calculate average size
+        for (int i = 0; i < table.length && sampleCount < sampleSize; i++) {
+            StateEntry<K, N, S> entry = table[i];
+            if (entry == null) {
+                continue;
+            }
+
+            try {
+                S stateCopy = serializer.copy(entry.getState());
+                os.reset();
+                serializer.serialize(stateCopy, dov);
+                sampleSum += os.getPosition();
+                sampleCount++;
+            } catch (Exception e) {
+                // LOG.error("Error while estimating size for entry {}", i, e);
+                LOG.warn("ConcurrentModificationException while estimating size, ignore this entry.");
+                continue;
+            }
+        }
+
+        long avgSize = sampleSum / sampleCount;
+        long estimatedTotalSize = avgSize * tableSize;
+        LOG.info("Size estimation: samples={}, avgSize={}, tableSize={}, total={}",
+                sampleCount, avgSize, tableSize, estimatedTotalSize);
+        return estimatedTotalSize;
     }
 }

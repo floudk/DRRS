@@ -34,6 +34,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -198,4 +199,12 @@ public interface StreamOperator<OUT> extends CheckpointListener, KeyContext, Ser
                 "This method is not supported in " + getClass().getSimpleName());
     }
 
+    default Map<Integer, Long> getStateSizes(){
+        throw new UnsupportedOperationException(
+                "This method is not supported in " + getClass().getSimpleName());
+    }
+    default Long[] getProcessingKeyCounts(){
+        throw new UnsupportedOperationException(
+                "This method is not supported in " + getClass().getSimpleName());
+    }
 }

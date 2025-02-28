@@ -1036,8 +1036,7 @@ public class RestClusterClient<T> implements ClusterClient<T> {
     public CompletableFuture<String> triggerScale(
             JobID jobId,
             String operatorName,
-            int newParallelism,
-            String strategySelector) {
+            int newParallelism) {
 
         final ScaleTriggerHeaders scaleHeaders = ScaleTriggerHeaders.getInstance();
         final ScaleTriggerMessageParameters scaleMessageParameters =
@@ -1048,7 +1047,7 @@ public class RestClusterClient<T> implements ClusterClient<T> {
                 sendRequest(
                         scaleHeaders,
                         scaleMessageParameters,
-                        new ScaleTriggerRequestBody(operatorName, newParallelism,null, strategySelector));
+                        new ScaleTriggerRequestBody(operatorName, newParallelism,null));
 
         return responseFuture
                 .thenApply(

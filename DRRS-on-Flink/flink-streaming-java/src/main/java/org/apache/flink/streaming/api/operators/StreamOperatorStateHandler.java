@@ -74,6 +74,7 @@ import javax.annotation.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 
@@ -492,6 +493,10 @@ public class StreamOperatorStateHandler {
 
     public StateSnapshotTransformer getStateSnapshotTransformer(String stateName){
         return ((ScalableStateBackend) keyedStateBackend).getStateSnapshotTransformer(stateName);
+    }
+
+    public Map<Integer, Long> getStateSizes() {
+        return ((ScalableStateBackend) keyedStateBackend).getStateSizes();
     }
 
 }
