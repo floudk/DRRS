@@ -185,7 +185,6 @@ public abstract class MigrateStrategy implements AvailabilityProvider {
             IndexedInputGate[] inputGates,
             BiConsumer<RunnableWithException,String> mailboxProcessor,
             ThrowingBiConsumer<StreamRecord, InputChannelInfo, Exception> recordConsumer){
-
         if (!ScaleConfig.Instance.ENABLE_DR){
             LOG.info("Disable DR migrate");
             return new DisableDRMigrate(

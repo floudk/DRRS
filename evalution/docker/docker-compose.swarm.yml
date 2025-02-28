@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  jobmanager:
+    image: drrs-experiment-suite:latest
+    command: "jobmanager"
+    ports:
+      - "8081:8081"
+    working_dir: /opt/flink
+    environment:
+      - |
+        FLINK_PROPERTIES=jobmanager.rpc.address: jobmanager
+      - FLINK_HOME=/opt/flink
+      - SYSTEM_TYPE=meces
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1.0'
+        reservations:
+          cpus: '1.0'
+    configs:
+      - source: scale-conf
+        target: /opt/flink/conf/scale-conf.properties
+        mode: 0444
+    networks:
+      - flink_swarm_net
+
+  taskmanager:
+    image: drrs-experiment-suite:latest
+    command: "taskmanager"
+    working_dir: /opt/flink
+    environment:
+      - |
+        FLINK_PROPERTIES=jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 1
+        taskmanager.memory.process.size: 20g
+        taskmanager.memory.task.off-heap.size: 4g
+        taskmanager.network.memory.max-overdraft-buffers-per-gate: 20
+      - FLINK_HOME=/opt/flink
+      - SYSTEM_TYPE=meces
+    depends_on:
+      - jobmanager  # For clarity, but won't enforce order in Swarm
+    deploy:
+      replicas: 46
+      resources:
+        limits:
+          cpus: '1.0'
+        reservations:
+          cpus: '1.0'
+          memory: 15G 
+    configs:
+      - source: scale-conf
+        target: /opt/flink/conf/scale-conf.properties
+        mode: 0444
+    networks:
+      - flink_swarm_net
+
+networks:
+  flink_swarm_net:
+    external: true
+
+
+configs:
+  scale-conf:
+    external: true 
+    name: scale-conf 

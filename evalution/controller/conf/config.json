@@ -1,0 +1,118 @@
+{
+  "master-url": "http://jobmanager:8081",
+  "kafka-producer-url": "http://kafka-producer:35000/start",
+  "metric-output-path": "path/to/results",
+  "do-not-scale": false,
+  "time-before-scale": {
+    "fwc": 60,
+    "q7": 300,
+    "q8": 300,
+    "twitch": 300
+  },
+  "time-after-scale": {
+    "fwc": 540,
+    "q7": 400,
+    "q8": 600,
+    "twitch": 300
+  },
+  "mechanism-folder": {
+    "drrs": "flink0",
+    "meces": "flink-meces",
+    "megaphone": "flink-megaphone",
+    "unbound": "flink-unbound",
+    "otfs": "flink0"
+  },
+  "jar-path": {
+    "fwc": "DStateHelper.jar",
+    "q7": "Nexmark.jar",
+    "q8": "Nexmark.jar",
+    "twitch": "Twitch.jar"
+  },
+  "scaling-vertex": {
+    "fwc": "count",
+    "q7": "maxWindow",
+    "q8": "SlidingProcessingTimeWindows",
+    "twitch": "Viewer-Loyalty-Calculator"
+  },
+  "taskmanagers": {
+    "fwc": 46,
+    "q7": 29,
+    "q8": 33,
+    "twitch": 38
+  },
+  "initial-parallelism": {
+    "fwc": 25,
+    "q7": 8,
+    "q8": 8,
+    "twitch": 8
+  },
+  "scale-out-parallelism": {
+    "fwc": 30,
+    "q7": 12,
+    "q8": 12,
+    "twitch": 12
+  },
+  "program-args": {
+    "fwc": {
+      "runtime": 1200,
+      "maxKeyNum": 256,
+      "keyNum": 4096,
+      "inputRate": 5000,
+      "inputDistribution": "EVENLY",
+      "recordSize": 1000,
+      "processingTimeDistribution": "UNIFORM",
+      "processingTimeMean": 1,
+      "processingTimeStddev": 0.2,
+      "recordsPerKeyDistribution": "ZIPF",
+      "keySkewFactor": 1.5,
+      "stateSizeDistribution": "UNIFORM",
+      "stateSizeMean": 7500000,
+      "sourceParallelism": 12,
+      "sinkParallelism": 4,
+      "keepAliveAfterEmitComplete": false
+    },
+    "q7":{
+      "kafkaBrokers": "smile3:9092",
+      "maxKeyNum": 128,
+      "windowSize": 10,
+      "query": "q7",
+      "markerInterval": 20,
+      "copyInSource": 1,
+      "specificParallelism": 10,
+      "slideIntervalInMs": 500,
+      "perPrint":400
+    },
+    "q8":{
+      "kafkaBrokers": "smile3:9092",
+      "maxKeyNum": 128,
+      "windowSize": 40,
+      "query": "q8",
+      "markerInterval": 50,
+      "copyInSource": 0,
+      "slideIntervalInMs": 5000,
+      "specificParallelism": 4,
+      "perPrint": 400
+    },
+    "twitch": {
+      "kafkaBrokers": "smile3:9092",
+      "maxKeyNum": 128,
+      "windowSize": 10,
+      "markerInterval": 1000,
+      "aggParallelism": 8,
+      "sourceParallelism": 10,
+      "enableKeyShuffling": true,
+      "perPrint": 500000
+    }
+  },
+  "source-metrics":{
+    "q7": ["Source__Bid_Source.numRecordsInPerSecond"],
+    "q8": [
+      "Source__Person_Source.numRecordsInPerSecond",
+      "Source__Auction_Source.numRecordsInPerSecond"
+    ],
+    "twitch": ["Source__Twitch_Source.numRecordsInPerSecond"]
+  },
+  "ablation":{
+    "dull-scheduler": false
+  }
+}

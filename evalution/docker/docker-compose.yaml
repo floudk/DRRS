@@ -1,0 +1,56 @@
+version: '3'
+services:
+  jobmanager:
+    build:
+      context: /path/to/build/context
+      dockerfile: evaluation/docker/Dockerfile
+    # image: drrs-experiment-suite:latest
+    image: floudk/drrs-experiment-suite:latest
+    ports:
+      - "8081:8081"
+    command: "jobmanager"
+    working_dir: /opt/flink
+    networks:
+      - custom_net
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+      - FLINK_HOME=/opt/flink
+      - SYSTEM_TYPE=otfs
+    volumes:
+      - path/to/scale-conf.properties:/opt/flink/conf/scale-conf.properties
+
+  taskmanager:
+    image: floudk/drrs-experiment-suite:latest
+    # image: drrs-experiment-suite:latest
+    working_dir: /opt/flink
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 1
+        taskmanager.memory.process.size: 9g
+        taskmanager.memory.task.heap.size: 3g
+        taskmanager.memory.task.off-heap.size: 1g
+        taskmanager.network.memory.max-overdraft-buffers-per-gate: 8
+      - FLINK_HOME=/opt/flink
+      - SYSTEM_TYPE=otfs
+    depends_on:
+      - jobmanager
+    deploy:
+      replicas: 38
+      resources:
+        limits:
+          cpus: '1.0'
+        reservations:
+          cpus: '1.0'
+    command: "taskmanager"
+    networks:
+      - custom_net
+    volumes:
+      - path/to/scale-conf.properties:/opt/flink/conf/scale-conf.properties
+
+networks:
+  custom_net:
+    external: true

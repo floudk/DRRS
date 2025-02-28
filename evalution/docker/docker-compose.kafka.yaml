@@ -1,0 +1,38 @@
+version: '3'
+services:
+  broker:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://flink_cluster:9092,CONTROLLER://flink_cluster:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://flink_cluster:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@flink_cluster:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 20
+      KAFKA_NUM_IO_THREADS: 20
+      KAFKA_NUM_NETWORK_THREADS: 20
+      KAFKA_LOG_FLUSH_INTERVAL_MESSAGES: 10000
+      KAFKA_LOG_FLUSH_INTERVAL_MS: 1000
+    network_mode: "host"
+  
+  datagen:
+    build:  
+      context: /ptah/to/build/context
+      dockerfile: dockerfile
+    network_mode: "host"
+    volumes:
+      - /ptah/to/datagen:/app/datagen
+      - /ptah/to/events:/app/events
+    working_dir: /app/datagen
+    command: "python run.py"
+    environment:
+        TOPIC: twitch
+    depends_on:
+      - broker
+    

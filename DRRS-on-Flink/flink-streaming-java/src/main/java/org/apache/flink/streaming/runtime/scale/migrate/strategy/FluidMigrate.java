@@ -66,7 +66,7 @@ public class FluidMigrate extends MigrateStrategy {
     private final ConcurrentHashMap<RerouteID, RerouteProcessingTracker>
             rerouteProcessingTrackers = new ConcurrentHashMap<>();
 
-    private final IntraSubscaleKeyOrderSelector intraSubscaleKeyOrderSelector;
+    protected final IntraSubscaleKeyOrderSelector intraSubscaleKeyOrderSelector;
     public FluidMigrate(
             StreamOperator mainOperator,
             ScaleCommOutAdapter scaleCommOutAdapter,

@@ -150,7 +150,7 @@ public class Twitch {
                 .sinkTo(fileSink)
                 .name("FileSink")
                 .uid("op8")
-                .setParallelism(1)
+                .setParallelism(aggParallelism)
                 .slotSharingGroup("trend-metrics");
 
         env.execute("Twitch");

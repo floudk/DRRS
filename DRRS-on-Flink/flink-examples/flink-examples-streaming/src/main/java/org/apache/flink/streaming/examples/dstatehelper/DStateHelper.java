@@ -79,6 +79,8 @@ public class DStateHelper {
 
     static int maxKeyNum = 12;
 
+    static boolean keepAliveAfterEmitComplete = false;
+
     public static void main(String[] args) throws Exception{
         CLI.fromArgs(args);
 
@@ -100,7 +102,8 @@ public class DStateHelper {
                         processingTimeMean,
                         processingTimeStddev,
                         recordsPerKeyDistribution,
-                        keySkewFactor)
+                        keySkewFactor,
+                        keepAliveAfterEmitComplete)
                 ).setParallelism(sourceParallelism).name("source").slotSharingGroup("exclusive-source");
 
 
@@ -153,6 +156,7 @@ public class DStateHelper {
         static final String STATE_SIZE_MEAN = "stateSizeMean";
         static final String SOURCE_PARALLELISM = "sourceParallelism";
         static final String SINK_PARALLELISM = "sinkParallelism";
+        static final String KEEP_ALIVE_AFTER_EMIT_COMPLETE = "keepAliveAfterEmitComplete";
 
 
 
@@ -208,12 +212,16 @@ public class DStateHelper {
             if (params.has(KEY_SKEW_FACTOR)) {
                 keySkewFactor = params.getDouble(KEY_SKEW_FACTOR);
             }
+            if (params.has(KEEP_ALIVE_AFTER_EMIT_COMPLETE)) {
+                keepAliveAfterEmitComplete = params.getBoolean(KEEP_ALIVE_AFTER_EMIT_COMPLETE);
+            }
 
             System.out.println("Configuration loaded successfully");
             System.out.println("totalRuntime: " + totalRuntime);
             System.out.println("keyList: " + keyList);
             System.out.println("inputRate: " + inputRate);
             System.out.println("records_per_key_distribution: " + recordsPerKeyDistribution +", keySkewFactor: " + keySkewFactor);
+            System.out.println("recordSize: " + recordSize);
 
         }
     }
@@ -313,6 +321,7 @@ public class DStateHelper {
         RecordsPerKeyDistribution recordsPerKeyDistribution;
         private final double skewFactor;
         private double[] cumulativeWeights;
+        private final boolean keepAliveAfterEmitComplete;
 
 
         private transient ListState<Tuple5<Map<String, Integer>, Integer, Integer, Integer, Long>> checkpointedState;
@@ -334,7 +343,8 @@ public class DStateHelper {
                         double processingTimeMean,
                         double processingTimeStddev,
                         RecordsPerKeyDistribution recordsPerKeyDistribution,
-                        double keySkewFactor) {
+                        double keySkewFactor,
+                        boolean keepAliveAfterEmitComplete) {
 
             if (runtime < 1|| rate < 1 || recordSize < 1 || processingTimeMean < 1) {
                 throw new IllegalArgumentException("All parameters must be greater than 0");
@@ -345,6 +355,8 @@ public class DStateHelper {
 
             this.runtime=runtime;
             this.keyList = keyList;
+
+            this.keepAliveAfterEmitComplete = keepAliveAfterEmitComplete;
 
             inputRates = new int[sourceParallelism];
             if (inputDistribution == InputDistribution.EVENLY) {
@@ -411,6 +423,7 @@ public class DStateHelper {
             LOG.info("{}: Start emitting records: {}/{} with expectedRecords {}, current time {}/{}",
                     taskIndex, totalCount, totalGenNum, expectedRecords, currSec, runtime);
 
+
             long startNanoTime = System.nanoTime();
             if (totalCount == 0) {
                 globalStartMillTime = System.currentTimeMillis();
@@ -470,6 +483,20 @@ public class DStateHelper {
                 genRecord(ctx, taskIndex, intervalMs);
                 expectedRecords--;
             }
+
+            if (keepAliveAfterEmitComplete) {
+                // keeps alive but not emitting records, until last 30 minutes from globalStartMillTime
+                LOG.info("keepAliveAfterEmitComplete: true, will keep alive for 30 minutes after emitting complete until {}",
+                        globalStartMillTime + 30 * 60 * 1000);
+                while (isRunning ) {
+                    LockSupport.parkNanos(1_000_000_000L);
+                    // if from the start of the program, it has been running for 30 minutes
+                    if (System.currentTimeMillis() - globalStartMillTime > 30 * 60 * 1000) {
+                        break;
+                    }
+                }
+            }
+
         }
 
         private void genRecord(

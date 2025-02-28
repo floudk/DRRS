@@ -1,0 +1,31 @@
+tps_warmup_q7: 500
+tps_warmup_duration_q7: 20
+
+tps_warmup_q8: 500
+tps_warmup_duration_q8: 50
+
+tps_q7: 10000
+tps_q8: 1000
+events_num: 1e9
+each_tps: 800
+
+person_proportion: 0
+auction_proportion: 0
+bid_proportion: 50
+
+num_active_people: 300
+first_person_id: 100
+
+first_auction_id: 1000
+hot_sellers_ratio: 5
+first_category_id: 10
+
+
+hot_auction_ratio: 4
+hot_bidders_ratio: 8
+
+num_in_flight_auctions: 100
+
+avg_person_byte_size: 6000
+avg_auction_byte_size: 8000
+avg_bid_byte_size: 2048

@@ -78,6 +78,10 @@ public class DisableDRMigrate extends FluidMigrate{
 
             migrationBuffer.subscale(sourceTaskWithInKeys);
             // async request state migration in
+            intraSubscaleKeyOrderSelector.registerSelectorForSubscale(
+                    tb.subscaleID,
+                    sourceTaskWithInKeys,
+                    tb.involvedKeys);
             requestStatesAsync(sourceTaskWithInKeys,tb.subscaleID);
         }
 
