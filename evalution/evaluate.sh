@@ -7,7 +7,7 @@ EXTERNAL_PY_CONTROLLER="/path/to/controller/controller.py"
 
 SSH_USER="SSH_USER"
 
-DOCKER_SCRIPT="/path/to/evaluation/evaluate.sh"
+DOCKER_SCRIPT="/path/to/evaluation/helper.sh"
 LOG_DIR="/path/to/evaluation/results"
 
 SCALE_CONF="/path/to/evaluation/docker/scale-conf.properties"
